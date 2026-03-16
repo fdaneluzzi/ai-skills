@@ -1,18 +1,127 @@
-# VTEX External Developer Skills
+<p align="center">
+  <img src="assets/banner.png" alt="VTEX AI Skills" width="100%">
+</p>
 
-A collection of AI agent skills for VTEX platform development, organized across five specialized tracks. Each skill is authored once in a canonical Markdown format and exported to multiple AI platforms, so you get consistent guidance regardless of which tool you use.
+<h1 align="center">VTEX AI Skills</h1>
+<p align="center">
+  <strong>21 AI agent skills for VTEX platform development — one source, five export formats.</strong>
+</p>
+<p align="center">
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#tracks--skills">Tracks</a> •
+  <a href="#supported-platforms">Platforms</a> •
+  <a href="#contributing">Contributing</a>
+</p>
+<p align="center">
+  <img src="https://img.shields.io/badge/skills-21-F71963" alt="21 skills">
+  <img src="https://img.shields.io/badge/tracks-5-blue" alt="5 tracks">
+  <img src="https://img.shields.io/badge/platforms-5-green" alt="5 platforms">
+  <img src="https://img.shields.io/github/license/vtexdocs/ai-skills" alt="License">
+  <img src="https://img.shields.io/github/actions/workflow/status/vtexdocs/ai-skills/generate-exports.yml?label=exports" alt="Build">
+</p>
 
-## Overview
+---
 
-This repository contains structured knowledge and best practices for VTEX development. The skills are designed to give AI assistants accurate, constraint-aware guidance when helping developers build on VTEX, covering everything from FastStore overrides to payment connector security.
+## Quick Start
 
-The build system is Bun-based. Skills live in `tracks/`, exports go to `exports/`, and two scripts handle everything: `validate.ts` checks skill quality and `export.ts` generates platform-specific files.
+Pick your platform and run one command. No clone needed.
 
-## Tracks
+### Install all skills with npx (Cursor, Claude Code, Codex, OpenCode, and 38+ agents)
 
-Five tracks, 21 skills total.
+```bash
+npx skills add vtexdocs/ai-skills
+```
 
-### Track 1: FastStore Implementation & Customization (4 skills)
+This uses the [open skills CLI](https://github.com/vercel-labs/skills) to install skills into whichever AI agents you have configured. It auto-detects Cursor, Claude Code, Codex, OpenCode, and others. Use `--list` to preview available skills before installing, or `--all` to install everything non-interactively.
+
+### AGENTS.md (Recommended — works with Cursor, Copilot, Codex, Windsurf, Amp, Devin, and more)
+
+```bash
+curl -sL https://github.com/vtexdocs/ai-skills/releases/latest/download/agents-md.tar.gz | tar xz -C your-project/
+```
+
+This places a root `AGENTS.md` with links to per-track files in subdirectories. Most AI coding tools discover and follow these instructions automatically.
+
+### Cursor
+
+```bash
+mkdir -p your-project/.cursor/rules
+curl -sL https://github.com/vtexdocs/ai-skills/releases/latest/download/cursor-rules.tar.gz | tar xz -C your-project/.cursor/rules/
+```
+
+Each `.mdc` file includes glob patterns that auto-attach the rule when you open matching files. Per-track composites (e.g., `faststore-all.mdc`) are also available.
+
+### GitHub Copilot
+
+```bash
+mkdir -p your-project/.github
+curl -sL https://github.com/vtexdocs/ai-skills/releases/latest/download/copilot-instructions.tar.gz | tar xz -C your-project/.github/
+```
+
+Per-track files are available in `exports/copilot/` if you only need a subset.
+
+### Claude Projects
+
+Upload files from [`exports/claude/`](exports/claude/) as project knowledge in your Claude Project settings. Use individual skill files for focused context, or per-track composites (e.g., `faststore.md`) for broader coverage.
+
+### OpenCode
+
+```bash
+curl -sL https://github.com/vtexdocs/ai-skills/releases/latest/download/opencode-skills.tar.gz | tar xz -C ~/.config/opencode/skills/
+```
+
+Each skill becomes a directory with a `SKILL.md` file. OpenCode discovers them automatically and makes them available as loadable skills in your sessions.
+
+<details>
+<summary>Alternative: clone the repo and copy locally</summary>
+
+```bash
+git clone https://github.com/vtexdocs/ai-skills.git
+cd ai-skills
+
+# AGENTS.md
+cp -r exports/agents-md/. /path/to/your-project/
+
+# Cursor
+mkdir -p /path/to/your-project/.cursor/rules
+cp exports/cursor/*.mdc /path/to/your-project/.cursor/rules/
+
+# Copilot
+cp exports/copilot/copilot-instructions.md /path/to/your-project/.github/copilot-instructions.md
+
+# OpenCode
+cp -r exports/opencode/. ~/.config/opencode/skills/
+```
+
+</details>
+
+---
+
+## Why Use This?
+
+- **AI assistants don't know VTEX-specific patterns.** The Overrides API, PPP endpoints, BFF requirements, and MasterData schema limits aren't in any LLM's training data at the depth you need. These skills fill that gap.
+- **Real constraints, not generic advice.** PCI compliance via the Secure Proxy, idempotency requirements on payment endpoints, the 2.5s fulfillment simulation timeout, the 60-schema MasterData limit — these are the details that prevent costly mistakes in production.
+- **One source, five platforms.** Skills are authored once in a canonical Markdown format and exported automatically. No manual sync, no drift between tools.
+- **Built from official VTEX documentation.** Not generic LLM knowledge. Every constraint has a source, a detection pattern, and paired correct/wrong code examples.
+
+---
+
+## Supported Platforms
+
+| Platform | Format | Auto-detection | Files |
+|---|---|---|---|
+| **AGENTS.md** | Markdown | ✅ Native in 7+ tools | 6 |
+| **Cursor** | `.mdc` rules | ✅ Glob + description | 26 |
+| **GitHub Copilot** | Instructions | ✅ Auto-loaded | 6 |
+| **Claude Projects** | Knowledge files | Manual upload | 26 |
+| **OpenCode** | `SKILL.md` | ✅ Auto-discovered | 21 |
+
+---
+
+## Tracks & Skills
+
+<details>
+<summary><strong>Track 1: FastStore Implementation</strong> — 4 skills for storefront customization</summary>
 
 Overrides, theming, SDK hooks, and data fetching for FastStore storefronts. Covers the override API, design token system, cart/session/search state management, and GraphQL API extensions.
 
@@ -23,7 +132,10 @@ Overrides, theming, SDK hooks, and data fetching for FastStore storefronts. Cove
 | `faststore-state-management` | Cart, Session, Search, and Analytics SDK hooks |
 | `faststore-data-fetching` | GraphQL fragments, API extensions, and resolver patterns |
 
-### Track 2: Payment Connector Development (4 skills)
+</details>
+
+<details>
+<summary><strong>Track 2: Payment Connector Development</strong> — 4 skills for PPP integration</summary>
 
 All 9 Payment Provider Protocol endpoints, idempotency patterns, async payment flows, and PCI compliance via the Secure Proxy. Covers both mandatory payment flow and optional configuration flow.
 
@@ -34,7 +146,10 @@ All 9 Payment Provider Protocol endpoints, idempotency patterns, async payment f
 | `payment-async-flow` | Async approval, callback URLs, and the 7-day retry window |
 | `payment-pci-security` | Secure Proxy, card tokenization, and PCI constraint enforcement |
 
-### Track 3: Custom VTEX IO Apps (5 skills)
+</details>
+
+<details>
+<summary><strong>Track 3: Custom VTEX IO Apps</strong> — 5 skills for IO app development</summary>
 
 App manifest, builders, policies, `@vtex/api` clients, React components, GraphQL schemas, and MasterData v2 integration. The most comprehensive track, covering both frontend and backend IO development.
 
@@ -46,7 +161,10 @@ App manifest, builders, policies, `@vtex/api` clients, React components, GraphQL
 | `vtex-io-graphql` | GraphQL schemas, resolvers, `@cacheControl`, and `@auth` directives |
 | `vtex-io-masterdata` | MasterData v2 CRUD, schema design, and the 60-schema limit |
 
-### Track 4: Marketplace Integration (4 skills)
+</details>
+
+<details>
+<summary><strong>Track 4: Marketplace Integration</strong> — 4 skills for marketplace connectors</summary>
 
 SKU catalog sync, order hooks, fulfillment simulation, and rate limiting for marketplace connectors. Covers the Change Notification flow, Feed v3 vs Hook tradeoffs, and invoice/tracking patterns.
 
@@ -57,7 +175,10 @@ SKU catalog sync, order hooks, fulfillment simulation, and rate limiting for mar
 | `marketplace-fulfillment` | Simulation endpoint, 2.5s timeout, invoice and tracking updates |
 | `marketplace-rate-limiting` | 429 handling, exponential backoff, circuit breaker patterns |
 
-### Track 5: Headless Front-End Development (4 skills)
+</details>
+
+<details>
+<summary><strong>Track 5: Headless Front-End Development</strong> — 4 skills for headless storefronts</summary>
 
 BFF architecture, Intelligent Search API, checkout proxy patterns, and caching strategy for headless VTEX storefronts. Covers why a BFF is mandatory and which APIs can never be called from the browser.
 
@@ -68,7 +189,31 @@ BFF architecture, Intelligent Search API, checkout proxy patterns, and caching s
 | `headless-checkout-proxy` | Checkout API proxying, session cookies, and the 5-minute order window |
 | `headless-caching-strategy` | TTL rules, stale-while-revalidate, and what must never be cached |
 
-## Directory Structure
+</details>
+
+---
+
+## Open Plugins / Cursor Directory
+
+This repository is an [Open Plugin](https://open-plugins.com) — a portable, platform-agnostic skill pack that any AI coding tool can discover and install.
+
+```
+rules/*.mdc              # 26 Cursor rules (auto-discovered)
+skills/*/SKILL.md        # 21 agent skills (auto-discovered)
+.cursor-plugin/plugin.json   # Cursor plugin manifest
+.plugin/plugin.json          # Vendor-neutral plugin manifest
+```
+
+Compatible tools (Cursor, Claude Code, and others implementing the Open Plugins spec) can install this repo directly as a plugin. The `rules/` and `skills/` directories at the repo root follow the standard layout, and the manifests provide metadata for discovery.
+
+---
+
+## For Contributors
+
+<details>
+<summary>Directory structure, export commands, and validation</summary>
+
+### Directory Structure
 
 ```text
 vtex_skills/
@@ -124,60 +269,7 @@ vtex_skills/
   tsconfig.json
 ```
 
-## Usage
-
-### AGENTS.md (Recommended)
-
-AGENTS.md is the cross-tool standard for AI coding agent instructions, supported natively by Cursor, GitHub Copilot, Codex, Windsurf, Amp, Devin, and more. It is governed by the Linux Foundation's Agentic AI Foundation and adopted by over 60,000 repositories.
-
-Copy the `exports/agents-md/` directory structure into your project root.
-
-```bash
-cp -r exports/agents-md/. /your-project/
-```
-
-This places a root `AGENTS.md` with links to per-track `AGENTS.md` files in subdirectories. Most AI coding tools will discover and follow these instructions automatically.
-
-### Cursor
-
-Copy `.mdc` files from `exports/cursor/` to `.cursor/rules/` in your project.
-
-```bash
-mkdir -p /your-project/.cursor/rules
-cp exports/cursor/*.mdc /your-project/.cursor/rules/
-```
-
-Each skill exports with glob patterns that auto-attach the rule when you reference matching files. For example, the FastStore overrides skill activates when you open files in `src/components/overrides/`. Skills also include activation descriptions so Cursor's AI can decide when to include them based on conversation context.
-
-Per-track composite files (e.g., `faststore-all.mdc`) are also available if you want all skills for a track loaded together.
-
-### GitHub Copilot
-
-Copy the combined instructions file from `exports/copilot/` to `.github/copilot-instructions.md` in your project.
-
-```bash
-cp exports/copilot/copilot-instructions.md /your-project/.github/copilot-instructions.md
-```
-
-Per-track files are also available in `exports/copilot/` if you only want a subset of tracks.
-
-### Claude Projects
-
-Upload files from `exports/claude/` as project knowledge in your Claude Project settings.
-
-You can upload individual skill files for focused context, or the per-track composite files (e.g., `faststore.md`) for broader coverage. Claude will reference them automatically during conversations in that project.
-
-### OpenCode
-
-Copy skill directories from `exports/opencode/` to `~/.config/opencode/skills/`.
-
-```bash
-cp -r exports/opencode/. ~/.config/opencode/skills/
-```
-
-Each skill becomes a directory with a `SKILL.md` file. OpenCode discovers them automatically and makes them available as loadable skills in your sessions.
-
-## Export Commands
+### Export Commands
 
 Generate platform exports from the source skill files:
 
@@ -195,7 +287,7 @@ bun run export:opencode
 
 Exports are written to `exports/{platform}/` and overwrite existing files. Run export after any skill changes before committing.
 
-## Validation
+### Validation
 
 Check all skill files for quality and correctness before exporting:
 
@@ -217,6 +309,16 @@ The validator runs 11 checks on every skill file:
 - **track-consistency** — the `track` frontmatter field matches the directory
 - **globs-format** — if present, the `globs` field is a valid array of glob pattern strings
 
+</details>
+
+---
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for a complete guide on adding skills, tracks, and export platforms.
+
+---
+
+## License
+
+See [LICENSE](LICENSE) for details.
