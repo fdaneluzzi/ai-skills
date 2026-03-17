@@ -16,6 +16,17 @@ interface SkillFrontmatter {
   globs?: string[];
   version?: string;
   vtex_docs_verified?: string;
+  metadata?: {
+    track?: string;
+    tags?: string[];
+    globs?: string[];
+    version?: string;
+    purpose?: string;
+    applies_to?: string[];
+    excludes?: string[];
+    decision_scope?: string[];
+    vtex_docs_verified?: string;
+  };
 }
 
 interface Skill {
@@ -51,6 +62,13 @@ function skillSlug(skill: Skill): string {
 
 function normalizeDescription(desc: string): string {
   return desc.replace(/\s+/g, " ").trim();
+}
+
+function resolveField<T>(fm: SkillFrontmatter, field: string): T | undefined {
+  const flat = (fm as any)[field];
+  if (flat !== undefined && flat !== null) return flat as T;
+  if (fm.metadata) return (fm.metadata as any)[field] as T | undefined;
+  return undefined;
 }
 
 function discoverSkills(): Skill[] {
@@ -95,7 +113,7 @@ function organizeByTrack(skills: Skill[]): Track[] {
   const trackMap = new Map<string, Skill[]>();
 
   for (const skill of skills) {
-    const trackName = skill.frontmatter.track;
+    const trackName = resolveField<string>(skill.frontmatter, 'track') ?? skill.frontmatter.track;
     if (!trackMap.has(trackName)) {
       trackMap.set(trackName, []);
     }
@@ -116,7 +134,7 @@ function organizeByTrack(skills: Skill[]): Track[] {
 
 function buildCursorMdc(skill: Skill): string {
   const desc = normalizeDescription(skill.frontmatter.description);
-  const globs = skill.frontmatter.globs;
+  const globs = resolveField<string[]>(skill.frontmatter, 'globs');
   const globsLine =
     globs && globs.length > 0 ? globs.map((g) => `"${g}"`).join(",") : "";
   return `---
@@ -138,8 +156,9 @@ function buildCursorTrackMdc(track: Track): string {
   // Collect all unique globs from skills in this track
   const allGlobs = new Set<string>();
   for (const skill of track.skills) {
-    if (skill.frontmatter.globs) {
-      for (const g of skill.frontmatter.globs) {
+    const skillGlobs = resolveField<string[]>(skill.frontmatter, 'globs');
+    if (skillGlobs) {
+      for (const g of skillGlobs) {
         allGlobs.add(g);
       }
     }
@@ -201,7 +220,7 @@ ${sections.join("\n\n---\n\n")}
 
 function buildClaudeSkillMd(skill: Skill): string {
   const desc = normalizeDescription(skill.frontmatter.description);
-  const trackTitle = formatTrackTitle(skill.frontmatter.track);
+   const trackTitle = formatTrackTitle(resolveField<string>(skill.frontmatter, 'track') ?? skill.frontmatter.track);
 
   return `This skill provides guidance for AI agents working with VTEX ${trackTitle}. Apply these constraints and patterns when assisting developers with ${desc.toLowerCase().endsWith(".") ? desc.toLowerCase() : desc.toLowerCase() + "."}
 
@@ -280,7 +299,7 @@ function buildOpenCodeSkillMd(skill: Skill): string {
 
   return `---
 name: ${skill.frontmatter.name}
-description: ${desc}
+description: "${desc}"
 ---
 
 ${skill.content.trim()}
@@ -311,7 +330,7 @@ const exporters: Record<string, PlatformExporter> = {
       ensureDir(outDir);
 
       for (const skill of skills) {
-        const fileName = `${skill.frontmatter.track}-${skillSlug(skill)}.mdc`;
+         const fileName = `${resolveField<string>(skill.frontmatter, 'track') ?? skill.frontmatter.track}-${skillSlug(skill)}.mdc`;
         writeOutput(join(outDir, fileName), buildCursorMdc(skill));
       }
 
@@ -347,7 +366,7 @@ const exporters: Record<string, PlatformExporter> = {
       ensureDir(outDir);
 
       for (const skill of skills) {
-        const fileName = `${skill.frontmatter.track}-${skillSlug(skill)}.md`;
+         const fileName = `${resolveField<string>(skill.frontmatter, 'track') ?? skill.frontmatter.track}-${skillSlug(skill)}.md`;
         writeOutput(join(outDir, fileName), buildClaudeSkillMd(skill));
       }
 
