@@ -1,6 +1,7 @@
 ---
-name: vtex-io-graphql-api
 description: "Apply when working with GraphQL schema files in graphql/ or implementing resolvers in node/resolvers/ for VTEX IO apps. Covers schema.graphql definitions, @cacheControl and @auth directives, custom type definitions, and resolver registration in the Service class. Use for exposing data through GraphQL queries and mutations with proper cache control and authentication enforcement."
+globs: "graphql/**/*.graphql","graphql/**/*.ts","node/resolvers/**/*.ts"
+alwaysApply: false
 ---
 
 # GraphQL Schemas & Resolvers
