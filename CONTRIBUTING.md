@@ -306,6 +306,38 @@ Export file names are derived from skill names and track names automatically by 
 
 ---
 
+## Releases and Versioning
+
+This repository uses [Release Please](https://github.com/googleapis/release-please) for automated versioning. **Do not push version tags or edit version fields manually.**
+
+### How it works
+
+1. Merge a PR to `main` → CI regenerates exports and the Release Please bot opens (or updates) a release PR.
+2. The release PR title is `chore(release): vX.Y.Z` and contains a generated changelog.
+3. Merge the release PR → Release Please creates the git tag → the release workflow packages tarballs and publishes a GitHub Release.
+
+`package.json`, `.plugin/plugin.json`, and `.cursor-plugin/plugin.json` are bumped together automatically.
+
+### Commit conventions → version bump
+
+| Commit prefix | Version bump | When to use |
+|---|---|---|
+| `feat(scope):` | **minor** | New skill, new export platform, new validator check |
+| `fix(scope):` | patch | Bug fix, broken reference URL, wrong constraint |
+| `refactor(scope):` | patch | Skill content improvement, template conversion |
+| `chore:`, `docs:` | none | No release opened |
+| `feat!:` or `BREAKING CHANGE:` in footer | **major** | Removed skill, renamed track, changed skill name |
+
+Use `refactor(track-name):` for skill content work (e.g. `refactor(payment): improve idempotency examples`). This creates a patch bump and shows up in the changelog under "Skill Improvements".
+
+### What not to do
+
+- Do not run `npm version`, `bun version`, or edit `"version"` in any JSON file by hand.
+- Do not push `v*` tags manually.
+- Do not merge the release PR until you are ready to publish — you can let it accumulate multiple commits first.
+
+---
+
 ## For AI Agents
 
-If you are an AI coding agent contributing to this repository, read [`AGENTS.md`](AGENTS.md) first. It contains the quick-reference rules for skill format, validation, and export workflow.
+If you are an AI coding agent contributing to this repository, read [`AGENTS.md`](AGENTS.md) first. It contains the quick-reference rules for skill format, validation, export workflow, and release conventions.

@@ -62,3 +62,23 @@ Only link to `developers.vtex.com` or `help.vtex.com`. Verify URLs resolve befor
 ## Validation checks
 
 `bun run validate` runs 11 checks: yaml-validity, description-quality, required-sections, code-block-annotations, no-placeholders, detection-patterns, paired-examples, url-format, size-bounds, track-consistency, globs-format.
+
+## Releases and versioning
+
+Releases are automated via [Release Please](https://github.com/googleapis/release-please). **Do not push version tags manually.**
+
+- Merging to `main` triggers a bot-managed **release PR** that bumps the version based on conventional commits.
+- Merging that release PR creates the tag and GitHub Release automatically.
+- `package.json`, `.plugin/plugin.json`, and `.cursor-plugin/plugin.json` are all bumped together — never edit their `version` fields by hand.
+
+**Commit prefix → version bump:**
+
+| Prefix | Bump | Example |
+|---|---|---|
+| `feat:` / `feat(scope):` | minor | new skill, new export platform |
+| `fix:` / `fix(scope):` | patch | bug fix, broken URL |
+| `refactor:` / `refactor(scope):` | patch | skill content improvement |
+| `chore:`, `docs:` | none | no release PR opened |
+| `feat!:` or `BREAKING CHANGE:` in footer | major | removed skill, renamed track |
+
+Use `refactor(track):` for skill content changes so they appear in the changelog under "Skill Improvements" without triggering a minor bump.

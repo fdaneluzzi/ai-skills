@@ -41,6 +41,7 @@ jobs:
 
       - name: Sync plugin directories
         run: |
+          rm -f rules/*.mdc
           cp exports/cursor/*.mdc rules/
           rm -rf skills/
           cp -r exports/opencode/. skills/
