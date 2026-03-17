@@ -382,6 +382,11 @@ export default new Service({
 - [ ] Do private operations include a valid `productCode` and `resourceCode` pair?
 - [ ] Is GraphQL being used for frontend/app consumption rather than integration-only flows?
 
+## Related skills
+- [`vtex-io-http-routes`](../vtex-io-http-routes/skill.md) — Use when the endpoint is an explicit integration contract, webhook, callback, or simpler request-response route.
+- [`vtex-io-events-and-workers`](../vtex-io-events-and-workers/skill.md) — Use when the work is asynchronous, retryable, or should not block a request-response cycle.
+- [`vtex-io-service-runtime`](../vtex-io-service-runtime/skill.md) — Use for the broader `Service` runtime model, middleware flow, and backend execution model around GraphQL resolvers.
+
 ## Reference
 - [GraphQL in VTEX IO](https://developers.vtex.com/docs/guides/graphql-in-vtex-io) — Overview of GraphQL usage in the VTEX IO platform
 - [GraphQL Builder](https://developers.vtex.com/docs/guides/vtex-io-documentation-graphql-builder) — Builder reference for schema processing and directory structure
