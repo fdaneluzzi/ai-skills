@@ -2,59 +2,41 @@ This skill provides guidance for AI agents working with VTEX Payment Connector D
 
 # Idempotency & Duplicate Prevention
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Idempotency patterns for VTEX Payment Provider Protocol connectors. This includes using `paymentId` as the primary idempotency key for Create Payment, using `requestId` for Cancel/Capture/Refund operations, implementing a payment state machine, and handling Gateway retries that can occur for up to 7 days on `undefined` status payments.
+Use this skill when:
+- Implementing any PPP endpoint handler that processes payments, cancellations, captures, or refunds
+- Ensuring repeated Gateway calls with the same identifiers produce identical results without re-processing
+- Building a payment state machine to prevent invalid transitions (e.g., capturing a cancelled payment)
+- Handling the Gateway's 7-day retry window for `undefined` status payments
 
-**When to use it**: When implementing any PPP endpoint handler that processes payments, cancellations, captures, or refunds. Use this skill whenever you need to ensure that repeated Gateway calls with the same identifiers produce identical results without re-processing.
+Do not use this skill for:
+- PPP endpoint response shapes and HTTP methods — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
+- Async callback URL notification logic — use [`payment-async-flow`](../payment-async-flow/skill.md)
+- PCI compliance and Secure Proxy — use [`payment-pci-security`](../payment-pci-security/skill.md)
 
-**What you'll learn**:
-- How `paymentId` and `requestId` function as idempotency keys across different endpoints
-- How to build a state machine that prevents invalid transitions
-- How to store and return cached responses for duplicate requests
-- Why the Gateway retries `undefined` payments for up to 7 days
+## Decision rules
 
-## Key Concepts
+- Use `paymentId` as the idempotency key for Create Payment — every call with the same `paymentId` must return the same result.
+- Use `requestId` as the idempotency key for Cancel, Capture, and Refund operations.
+- If the Gateway sends a second Create Payment with the same `paymentId`, return the stored response without calling the acquirer again.
+- Async payment methods (Boleto, Pix) MUST return `status: "undefined"` — never `"approved"` until the acquirer confirms.
+- A payment moves through defined states: `undefined` → `approved` → `settled`, or `undefined` → `denied`, or `approved` → `cancelled`. Enforce valid transitions only.
+- Use a persistent data store (PostgreSQL, DynamoDB, VBase for VTEX IO) — never in-memory storage that is lost on restart.
 
-**Essential knowledge before implementation**:
+## Hard constraints
 
-### Concept 1: paymentId as Idempotency Key
+### Constraint: MUST use paymentId as idempotency key for Create Payment
 
-Every Create Payment request from the VTEX Gateway includes a unique `paymentId`. This identifier is the canonical idempotency key for the payment lifecycle. If the Gateway sends a second Create Payment request with the same `paymentId`, the connector MUST return the exact same response as the first call without creating a new transaction at the acquirer. The Gateway retries Create Payment calls with `undefined` status for up to 7 days.
+The connector MUST check for an existing record with the given `paymentId` before processing a new payment. If a record exists, return the stored response without calling the acquirer again.
 
-### Concept 2: requestId for Operation Idempotency
+**Why this matters**
+The VTEX Gateway retries Create Payment requests with `undefined` status for up to 7 days. Without idempotency on `paymentId`, each retry creates a new charge at the acquirer, resulting in duplicate charges to the customer. This is a financial loss and a critical production incident.
 
-Cancel, Capture, and Refund requests include a `requestId` field that ensures operational idempotency. The cancellation flow can be retried for an entire day. Each `requestId` represents a single logical operation — if the connector receives the same `requestId` again, it must return the previously computed result without re-executing the operation at the acquirer.
+**Detection**
+If the Create Payment handler does not check for an existing `paymentId` before processing, STOP. The handler must query the data store for the `paymentId` first.
 
-### Concept 3: Payment State Machine
-
-A payment moves through defined states: `undefined` → `approved` → `settled` or `undefined` → `denied` or `approved` → `cancelled`. The connector must enforce valid transitions. An `approved` payment cannot be approved again; a `cancelled` payment cannot be captured. The state machine prevents double-charging and ensures idempotent behavior.
-
-**Architecture/Data Flow**:
-
-```text
-Gateway sends POST /payments (paymentId=ABC)
-  → Connector checks store: paymentId=ABC exists?
-    → YES: return stored response (no acquirer call)
-    → NO: process with acquirer, store result, return response
-
-Gateway retries POST /payments (paymentId=ABC) [up to 7 days if undefined]
-  → Connector finds paymentId=ABC in store → returns stored response
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: MUST Use paymentId as Idempotency Key for Create Payment
-
-**Rule**: The connector MUST check for an existing record with the given `paymentId` before processing a new payment. If a record exists, return the stored response without calling the acquirer again.
-
-**Why**: The VTEX Gateway retries Create Payment requests with `undefined` status for up to 7 days. Without idempotency on `paymentId`, each retry creates a new charge at the acquirer, resulting in duplicate charges to the customer. This is a financial loss and a critical production incident.
-
-**Detection**: If the Create Payment handler does not check for an existing `paymentId` before processing, STOP. The handler must query the data store for the `paymentId` first.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -91,7 +73,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -117,17 +99,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST return identical response for duplicate requests
 
-### Constraint: MUST Return Identical Response for Duplicate Requests
+When the connector receives a Create Payment request with a `paymentId` that already exists in the data store, it MUST return the exact stored response. It MUST NOT create a new record, generate new identifiers, or re-process the payment.
 
-**Rule**: When the connector receives a Create Payment request with a `paymentId` that already exists in the data store, it MUST return the exact stored response. It MUST NOT create a new record, generate new identifiers, or re-process the payment.
+**Why this matters**
+The Gateway uses the response fields (`authorizationId`, `tid`, `nsu`, `status`) to track the transaction. If a retry returns different values, the Gateway loses track of the original transaction, causing reconciliation failures and potential double settlements.
 
-**Why**: The Gateway uses the response fields (`authorizationId`, `tid`, `nsu`, `status`) to track the transaction. If a retry returns different values, the Gateway loses track of the original transaction, causing reconciliation failures and potential double settlements.
+**Detection**
+If the handler creates a new database record or generates new identifiers when it finds an existing `paymentId`, STOP. The handler must return the previously stored response verbatim.
 
-**Detection**: If the handler creates a new database record or generates new identifiers when it finds an existing `paymentId`, STOP. The handler must return the previously stored response verbatim.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -143,7 +125,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -165,17 +147,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST NOT approve async payments synchronously
 
-### Constraint: MUST NOT Approve Async Payments Synchronously
+If a payment method is asynchronous (e.g., Boleto, Pix, bank redirect), the Create Payment response MUST return `status: "undefined"`. It MUST NOT return `status: "approved"` or `status: "denied"` until the payment is actually confirmed or rejected by the acquirer.
 
-**Rule**: If a payment method is asynchronous (e.g., Boleto, Pix, bank redirect), the Create Payment response MUST return `status: "undefined"`. It MUST NOT return `status: "approved"` or `status: "denied"` until the payment is actually confirmed or rejected by the acquirer.
+**Why this matters**
+Returning `approved` for an async method tells the Gateway the payment is confirmed before the customer has actually paid. The order ships, but no money was collected. The merchant loses the product and the revenue. The correct flow is to return `undefined` and use the `callbackUrl` to notify the Gateway when the payment is confirmed.
 
-**Why**: Returning `approved` for an async method tells the Gateway the payment is confirmed before the customer has actually paid. The order ships, but no money was collected. The merchant loses the product and the revenue. The correct flow is to return `undefined` and use the `callbackUrl` to notify the Gateway when the payment is confirmed.
+**Detection**
+If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect-based), STOP. Async methods must return `"undefined"` and use callbacks.
 
-**Detection**: If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect-based), STOP. Async methods must return `"undefined"` and use callbacks.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod, callbackUrl } = req.body;
@@ -183,7 +165,6 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
   const isAsyncMethod = ["BankInvoice", "Pix"].includes(paymentMethod);
 
   if (isAsyncMethod) {
-    // Initiate async payment — do NOT return approved
     const pending = await acquirer.initiateAsyncPayment(req.body);
 
     await paymentStore.save(paymentId, {
@@ -214,7 +195,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod } = req.body;
@@ -239,13 +220,9 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
-
-### Step 1: Create a Payment State Store
-
-Build a persistent store keyed by `paymentId` that tracks payment state and cached responses.
+Payment state store with idempotency support:
 
 ```typescript
 interface PaymentRecord {
@@ -264,48 +241,15 @@ interface OperationRecord {
   response: Record<string, unknown>;
   createdAt: Date;
 }
-
-class PaymentStore {
-  // Use a database in production (PostgreSQL, DynamoDB, VBase for VTEX IO)
-  private payments = new Map<string, PaymentRecord>();
-  private operations = new Map<string, OperationRecord>();
-
-  async findByPaymentId(paymentId: string): Promise<PaymentRecord | null> {
-    return this.payments.get(paymentId) ?? null;
-  }
-
-  async save(paymentId: string, record: PaymentRecord): Promise<void> {
-    this.payments.set(paymentId, record);
-  }
-
-  async updateStatus(paymentId: string, status: PaymentRecord["status"]): Promise<void> {
-    const record = this.payments.get(paymentId);
-    if (record) {
-      record.status = status;
-      record.updatedAt = new Date();
-    }
-  }
-
-  async findOperation(requestId: string): Promise<OperationRecord | null> {
-    return this.operations.get(requestId) ?? null;
-  }
-
-  async saveOperation(requestId: string, record: OperationRecord): Promise<void> {
-    this.operations.set(requestId, record);
-  }
-}
 ```
 
-### Step 2: Implement Idempotent Create Payment
-
-Guard every Create Payment call with a `paymentId` lookup.
+Idempotent Create Payment with state machine:
 
 ```typescript
 const store = new PaymentStore();
 
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
-  const body = req.body;
-  const { paymentId, paymentMethod, callbackUrl } = body;
+  const { paymentId, paymentMethod, callbackUrl } = req.body;
 
   // Idempotency check
   const existing = await store.findByPaymentId(paymentId);
@@ -315,7 +259,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
   }
 
   const isAsync = ["BankInvoice", "Pix"].includes(paymentMethod);
-  const result = await acquirer.process(body);
+  const result = await acquirer.process(req.body);
 
   const status = isAsync ? "undefined" : result.status;
   const response = {
@@ -334,21 +278,15 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
   };
 
   await store.save(paymentId, {
-    paymentId,
-    status,
-    response,
-    callbackUrl,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    paymentId, status, response, callbackUrl,
+    createdAt: new Date(), updatedAt: new Date(),
   });
 
   res.status(200).json(response);
 }
 ```
 
-### Step 3: Implement Idempotent Cancel/Capture/Refund with requestId
-
-Guard operations using `requestId` and enforce valid state transitions.
+Idempotent Cancel with `requestId` guard and state validation:
 
 ```typescript
 async function cancelPaymentHandler(req: Request, res: Response): Promise<void> {
@@ -364,30 +302,12 @@ async function cancelPaymentHandler(req: Request, res: Response): Promise<void> 
 
   // State machine validation
   const payment = await store.findByPaymentId(paymentId);
-  if (!payment) {
-    res.status(404).json({ error: "Payment not found" });
-    return;
-  }
-
-  if (payment.status === "cancelled") {
-    // Already cancelled — return success idempotently
-    const response = {
-      paymentId,
-      cancellationId: null,
-      code: "already-cancelled",
-      message: "Payment was already cancelled",
-      requestId,
-    };
-    res.status(200).json(response);
-    return;
-  }
-
-  if (!["undefined", "approved"].includes(payment.status)) {
+  if (!payment || !["undefined", "approved"].includes(payment.status)) {
     res.status(200).json({
       paymentId,
       cancellationId: null,
       code: "cancel-failed",
-      message: `Cannot cancel payment in ${payment.status} state`,
+      message: `Cannot cancel payment in ${payment?.status ?? "unknown"} state`,
       requestId,
     });
     return;
@@ -404,197 +324,38 @@ async function cancelPaymentHandler(req: Request, res: Response): Promise<void> 
 
   await store.updateStatus(paymentId, "cancelled");
   await store.saveOperation(requestId, {
-    requestId,
-    paymentId,
-    operation: "cancel",
-    response,
-    createdAt: new Date(),
+    requestId, paymentId, operation: "cancel", response, createdAt: new Date(),
   });
 
   res.status(200).json(response);
 }
 ```
 
-### Complete Example
+## Common failure modes
 
-Full idempotent payment lifecycle with state machine:
+- **Processing duplicate payments** — Calling the acquirer for every Create Payment request without checking if the `paymentId` already exists. The Gateway retries `undefined` payments for up to 7 days, so a single $100 payment can result in hundreds of duplicate charges.
+- **Synchronous approval of async payment methods** — Returning `status: "approved"` immediately for Boleto or Pix before the customer has actually paid. The order ships without payment collected.
+- **Losing state between retries** — Storing payment state in memory (`Map`, local variable) instead of a persistent database. On process restart, all state is lost and the next retry creates a duplicate charge.
+- **Generating new identifiers for duplicate requests** — Returning different `tid`, `nsu`, or `authorizationId` values when the Gateway retries with the same `paymentId`. This breaks Gateway reconciliation and can cause double settlements.
+- **Ignoring requestId on Cancel/Capture/Refund** — Not checking `requestId` before processing operations, causing duplicate cancellations or refunds when the Gateway retries.
 
-```typescript
-import express, { Request, Response } from "express";
+## Review checklist
 
-const app = express();
-app.use(express.json());
+- [ ] Does the Create Payment handler check the data store for an existing `paymentId` before calling the acquirer?
+- [ ] Are stored responses returned verbatim for duplicate `paymentId` requests?
+- [ ] Do Cancel, Capture, and Refund handlers check for existing `requestId` before processing?
+- [ ] Is the payment state machine enforced (e.g., cannot capture a cancelled payment)?
+- [ ] Do async payment methods (Boleto, Pix) return `status: "undefined"` instead of `"approved"`?
+- [ ] Is payment state stored in a persistent database (not in-memory)?
+- [ ] Are `delayToCancel` values extended for async methods (e.g., 604800 seconds = 7 days)?
 
-const store = new PaymentStore();
+## Related skills
 
-// Create Payment — idempotent on paymentId
-app.post("/payments", async (req: Request, res: Response) => {
-  const { paymentId, paymentMethod, callbackUrl } = req.body;
-
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json(existing.response);
-    return;
-  }
-
-  const isAsync = ["BankInvoice", "Pix"].includes(paymentMethod);
-  const result = await acquirer.process(req.body);
-  const status = isAsync ? "undefined" : result.status;
-
-  const response = buildCreatePaymentResponse(paymentId, status, result, isAsync);
-  await store.save(paymentId, {
-    paymentId, status, response, callbackUrl,
-    createdAt: new Date(), updatedAt: new Date(),
-  });
-
-  res.status(200).json(response);
-});
-
-// Cancel — idempotent on requestId, validates state
-app.post("/payments/:paymentId/cancellations", async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-  const { requestId } = req.body;
-
-  const existingOp = await store.findOperation(requestId);
-  if (existingOp) { res.status(200).json(existingOp.response); return; }
-
-  const payment = await store.findByPaymentId(paymentId);
-  if (!payment || !["undefined", "approved"].includes(payment.status)) {
-    res.status(200).json({ paymentId, cancellationId: null, code: "cancel-failed", message: "Invalid state", requestId });
-    return;
-  }
-
-  const result = await acquirer.cancel(paymentId);
-  const response = { paymentId, cancellationId: result.cancellationId ?? null, code: null, message: "Cancelled", requestId };
-  await store.updateStatus(paymentId, "cancelled");
-  await store.saveOperation(requestId, { requestId, paymentId, operation: "cancel", response, createdAt: new Date() });
-  res.status(200).json(response);
-});
-
-// Capture — idempotent on requestId, validates state
-app.post("/payments/:paymentId/settlements", async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-  const { requestId, value } = req.body;
-
-  const existingOp = await store.findOperation(requestId);
-  if (existingOp) { res.status(200).json(existingOp.response); return; }
-
-  const payment = await store.findByPaymentId(paymentId);
-  if (!payment || payment.status !== "approved") {
-    res.status(200).json({ paymentId, settleId: null, value: 0, code: "capture-failed", message: "Invalid state", requestId });
-    return;
-  }
-
-  const result = await acquirer.capture(paymentId, value);
-  const response = { paymentId, settleId: result.settleId ?? null, value: result.capturedValue ?? value, code: null, message: null, requestId };
-  await store.updateStatus(paymentId, "settled");
-  await store.saveOperation(requestId, { requestId, paymentId, operation: "capture", response, createdAt: new Date() });
-  res.status(200).json(response);
-});
-
-// Refund — idempotent on requestId, validates state
-app.post("/payments/:paymentId/refunds", async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-  const { requestId, value, settleId } = req.body;
-
-  const existingOp = await store.findOperation(requestId);
-  if (existingOp) { res.status(200).json(existingOp.response); return; }
-
-  const payment = await store.findByPaymentId(paymentId);
-  if (!payment || payment.status !== "settled") {
-    res.status(200).json({ paymentId, refundId: null, value: 0, code: "refund-failed", message: "Invalid state", requestId });
-    return;
-  }
-
-  const result = await acquirer.refund(paymentId, value);
-  const response = { paymentId, refundId: result.refundId ?? null, value: result.refundedValue ?? value, code: null, message: null, requestId };
-  await store.updateStatus(paymentId, "refunded");
-  await store.saveOperation(requestId, { requestId, paymentId, operation: "refund", response, createdAt: new Date() });
-  res.status(200).json(response);
-});
-
-app.listen(443);
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Processing Duplicate Payments
-
-**What happens**: The connector calls the acquirer for every Create Payment request without checking if the `paymentId` already exists in the data store.
-
-**Why it fails**: The Gateway retries `undefined` payments for up to 7 days. Each retry creates a new charge at the acquirer. A single $100 payment can result in hundreds of charges totaling thousands of dollars. This is a critical financial bug.
-
-**Fix**: Always check the data store before calling the acquirer:
-
-```typescript
-async function createPaymentHandler(req: Request, res: Response): Promise<void> {
-  const { paymentId } = req.body;
-
-  // ALWAYS check for existing payment first
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json(existing.response);
-    return;
-  }
-
-  // Only call acquirer for genuinely new payments
-  const result = await acquirer.process(req.body);
-  // ... store and return response
-}
-```
-
----
-
-### Anti-Pattern: Synchronous Approval of Async Payment Methods
-
-**What happens**: The connector returns `status: "approved"` immediately for Boleto or Pix payments, before the customer has actually paid.
-
-**Why it fails**: The Gateway treats `approved` as confirmed payment. The order is released for fulfillment, but no money was collected. The merchant ships products for free. Revenue is lost.
-
-**Fix**: Return `status: "undefined"` for async methods and use the callback mechanism:
-
-```typescript
-const isAsync = ["BankInvoice", "Pix"].includes(paymentMethod);
-const status = isAsync ? "undefined" : result.status;
-// Async methods: notify via callbackUrl when payment is confirmed
-```
-
----
-
-### Anti-Pattern: Losing State Between Retries
-
-**What happens**: The connector stores payment state in memory (e.g., a JavaScript `Map` or local variable) instead of a persistent database.
-
-**Why it fails**: When the connector process restarts (deploy, crash, scaling), all in-memory state is lost. The next Gateway retry creates a duplicate payment at the acquirer because the idempotency check fails to find the original record.
-
-**Fix**: Use a persistent data store:
-
-```typescript
-// WRONG — in-memory, lost on restart
-const payments = new Map<string, PaymentRecord>();
-
-// CORRECT — persistent database
-import { Pool } from "pg";
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-async function findByPaymentId(paymentId: string): Promise<PaymentRecord | null> {
-  const result = await pool.query(
-    "SELECT * FROM payments WHERE payment_id = $1",
-    [paymentId]
-  );
-  return result.rows[0] ?? null;
-}
-
-// For VTEX IO apps, use VBase:
-// const vbase = ctx.clients.vbase;
-// await vbase.getJSON<PaymentRecord>("payments", paymentId);
-```
+- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
+- [`payment-async-flow`](../payment-async-flow/skill.md) — Callback URL notification and the 7-day retry window
+- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance and Secure Proxy
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Implementing a Payment Provider](https://developers.vtex.com/docs/guides/payments-integration-implementing-a-payment-provider) — Official guide explaining idempotency requirements for Cancel, Capture, and Refund operations
 - [Developing a Payment Connector for VTEX](https://help.vtex.com/en/docs/tutorials/developing-a-payment-connector-for-vtex) — Help Center guide with idempotency implementation steps using paymentId and VBase

@@ -6,68 +6,43 @@ These instructions provide guidance for AI-assisted VTEX platform development.
 
 # FastStore Data Layer & API Integration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: FastStore's GraphQL-based data layer, including the FastStore API, API extensions for VTEX and third-party data, GraphQL fragments for extending queries, and patterns for consuming data in components. The FastStore API sits between the storefront and the VTEX platform, exposing product, cart, session, and search data via a GraphQL schema.
+Use this skill when:
+- You need to fetch product data, extend existing queries with additional fields, or integrate third-party APIs.
+- You need data beyond what native FastStore components display by default.
+- You are creating API extensions in `src/graphql/vtex/` or `src/graphql/thirdParty/`.
+- You are adding GraphQL fragments in `src/fragments/` to include new fields in predefined queries.
+- You are writing server-side resolvers that call VTEX REST APIs or external services.
 
-**When to use it**: When you need to fetch product data, extend existing queries with additional fields, integrate third-party APIs, or add custom data to FastStore pages. Use this skill whenever you need data beyond what native FastStore components display by default.
+Do not use this skill for:
+- Client-side state management (cart, session, search) — use the `faststore-state-management` skill.
+- Visual theming — use the `faststore-theming` skill.
+- Component replacement or props overriding — use the `faststore-overrides` skill.
 
-**What you'll learn**:
-- How the FastStore API GraphQL layer works and its predefined queries
-- How to extend VTEX API schemas with custom types and resolvers
-- How to extend third-party API schemas for external data
-- How to use GraphQL fragments to add fields to existing queries
-- How to consume extended data in custom components
+## Decision rules
 
-## Key Concepts
+- Use the FastStore GraphQL API for all catalog data (products, collections, search results, prices) — never make direct REST calls from client-side code.
+- Use VTEX API extensions (`src/graphql/vtex/`) when accessing VTEX platform data not exposed by default (e.g., custom product fields, installment details).
+- Use third-party API extensions (`src/graphql/thirdParty/`) when integrating external data sources (e.g., reviews, ratings, external inventory).
+- Use server fragments (`src/fragments/ServerProduct.ts`) for data needed at page load (SSR).
+- Use client fragments (`src/fragments/ClientProduct.ts`) for data that can load after initial render.
+- Keep API keys and secrets in server-side resolvers only — never in client-side code or `NEXT_PUBLIC_` environment variables.
+- Do not create custom Next.js API routes (`pages/api/`) — use the API extension system instead.
 
-**Essential knowledge before implementation**:
-
-### Concept 1: FastStore API as the Data Gateway
-
-The FastStore API is a GraphQL layer that serves as the interface between your storefront and the VTEX commerce platform. It provides type-safe queries for products, collections, search, cart, and session. All catalog data displayed on the storefront flows through this API. The API is designed for performance — it exposes only the fields needed for common ecommerce pages and supports GraphQL's selective field retrieval to avoid over-fetching.
-
-### Concept 2: API Extensions (VTEX and Third-Party)
-
-When the native FastStore API schema doesn't include data you need, you can extend it. There are two extension paths:
-- **VTEX API extensions**: Access VTEX platform data not exposed by default (e.g., custom product fields, installment details). These go in `src/graphql/vtex/` with `typeDefs/` and `resolvers/` subdirectories.
-- **Third-party API extensions**: Integrate external data sources (e.g., reviews, ratings, inventory from external systems). These go in `src/graphql/thirdParty/` with the same subdirectory structure.
-
-Both follow GraphQL conventions: you define type definitions (schema) and resolvers (data fetching logic).
-
-### Concept 3: GraphQL Fragments for Query Extension
-
-FastStore uses predefined queries (e.g., `ServerProduct`, `ClientProductGallery`, `ClientManyProducts`) that components consume. To add fields to these queries, you create GraphQL fragments in `src/fragments/`. Fragments come in two types:
-- **Server fragments** (`ServerProduct.ts`): Execute on the server during SSR. Used for data that should be available at page load.
-- **Client fragments** (`ClientProduct.ts`): Execute on the client. Used for data that can load after the initial render.
-
-Fragments use the `gql` function from `@faststore/core/api` to define the additional fields.
-
-**Architecture/Data Flow**:
-```text
-VTEX Commerce Platform
-  ↓
-FastStore API (GraphQL)  ←  src/graphql/vtex/ (VTEX extensions)
-  ↓                      ←  src/graphql/thirdParty/ (Third-party extensions)
-  ↓
-Predefined Queries  ←  src/fragments/ (Query extensions via fragments)
-  ↓
-React Components  ←  usePage(), useProductsQuery(), custom hooks
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use the GraphQL Layer for Catalog Data
 
-**Rule**: MUST use the FastStore GraphQL API for fetching catalog data (products, collections, search results, prices). MUST NOT make direct REST calls to VTEX Catalog APIs (`/api/catalog/`, `/api/catalog_system/`) from client-side code.
+MUST use the FastStore GraphQL API for fetching catalog data (products, collections, search results, prices). MUST NOT make direct REST calls to VTEX Catalog APIs (`/api/catalog/`, `/api/catalog_system/`) from client-side code.
 
-**Why**: The FastStore API handles authentication, caching, request batching, and data normalization. Direct REST calls bypass all of these optimizations and expose your VTEX domain structure to the browser. They also create CORS issues, duplicate data fetching logic, and miss the type safety that GraphQL provides. Server-side REST calls to VTEX APIs are acceptable in GraphQL resolvers — that's exactly what API extensions are for.
+**Why this matters**
+The FastStore API handles authentication, caching, request batching, and data normalization. Direct REST calls bypass all of these optimizations and expose your VTEX domain structure to the browser. They also create CORS issues, duplicate data fetching logic, and miss the type safety that GraphQL provides. Server-side REST calls to VTEX APIs are acceptable in GraphQL resolvers — that's exactly what API extensions are for.
 
-**Detection**: If you see `fetch('https://{account}.vtexcommercestable.com.br/api/catalog')` or `fetch('https://{account}.myvtex.com/api/catalog')` in client-side code (components, hooks, useEffect) → warn that this bypasses the GraphQL layer. If it's in a file under `src/graphql/` resolvers → this is acceptable (that's the API extension pattern). If you see `axios` or `fetch` with VTEX API paths in any file under `src/components/` or `src/pages/` → STOP and refactor to use the GraphQL API.
+**Detection**
+If you see `fetch('https://{account}.vtexcommercestable.com.br/api/catalog')` or `fetch('https://{account}.myvtex.com/api/catalog')` in client-side code (components, hooks, useEffect) → warn that this bypasses the GraphQL layer. If it's in a file under `src/graphql/` resolvers → this is acceptable (that's the API extension pattern). If you see `axios` or `fetch` with VTEX API paths in any file under `src/components/` or `src/pages/` → STOP and refactor to use the GraphQL API.
 
-✅ **CORRECT**:
+**Correct**
 ```typescript
 // src/graphql/vtex/resolvers/product.ts
 // Server-side resolver — REST calls to VTEX APIs are correct here
@@ -88,7 +63,7 @@ const productResolver: Record<string, Resolver> = {
 export default productResolver
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // src/components/ProductCustomData.tsx
 // WRONG: Direct REST call to VTEX Catalog API from a client component
@@ -117,13 +92,15 @@ export default function ProductCustomData({ productId }: ProductCustomDataProps)
 
 ### Constraint: Never Expose API Keys in Client-Side Code
 
-**Rule**: MUST NOT include VTEX API keys (`VTEX_APP_KEY`, `VTEX_APP_TOKEN`) or any secret credentials in client-side code, environment variables prefixed with `NEXT_PUBLIC_`, or any file that gets bundled into the browser.
+MUST NOT include VTEX API keys (`VTEX_APP_KEY`, `VTEX_APP_TOKEN`) or any secret credentials in client-side code, environment variables prefixed with `NEXT_PUBLIC_`, or any file that gets bundled into the browser.
 
-**Why**: API keys in client-side code are visible to anyone who inspects the page source or network requests. VTEX API keys provide access to catalog management, order processing, and account administration. Exposed keys can be used to modify products, access customer data, or disrupt store operations. This is a critical security vulnerability.
+**Why this matters**
+API keys in client-side code are visible to anyone who inspects the page source or network requests. VTEX API keys provide access to catalog management, order processing, and account administration. Exposed keys can be used to modify products, access customer data, or disrupt store operations. This is a critical security vulnerability.
 
-**Detection**: If you see `VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `X-VTEX-API-AppKey`, or `X-VTEX-API-AppToken` in any file under `src/components/`, `src/pages/`, or any file that runs in the browser → STOP immediately. This is a critical security issue. If you see `NEXT_PUBLIC_VTEX_APP_KEY` or `NEXT_PUBLIC_VTEX_APP_TOKEN` in `.env` files → STOP immediately. The `NEXT_PUBLIC_` prefix makes these values available in the browser bundle. If you see `process.env.VTEX_APP_KEY` in client-side code → STOP. While Next.js won't expose non-prefixed env vars to the client, the intent suggests a misunderstanding that may lead to the `NEXT_PUBLIC_` prefix being added later.
+**Detection**
+If you see `VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `X-VTEX-API-AppKey`, or `X-VTEX-API-AppToken` in any file under `src/components/`, `src/pages/`, or any file that runs in the browser → STOP immediately. This is a critical security issue. If you see `NEXT_PUBLIC_VTEX_APP_KEY` or `NEXT_PUBLIC_VTEX_APP_TOKEN` in `.env` files → STOP immediately. The `NEXT_PUBLIC_` prefix makes these values available in the browser bundle.
 
-✅ **CORRECT**:
+**Correct**
 ```typescript
 // src/graphql/vtex/resolvers/installments.ts
 // API keys are used ONLY in server-side resolvers, accessed via context
@@ -153,7 +130,7 @@ const installmentResolver: Record<string, Resolver> = {
 export default installmentResolver
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // src/components/ProductInstallments.tsx
 // CRITICAL SECURITY ISSUE: API keys exposed in client-side code
@@ -183,20 +160,17 @@ export default function ProductInstallments({ productId }: { productId: string }
 
 ### Constraint: Follow the API Extension Directory Structure
 
-**Rule**: MUST place API extension files in the correct directory structure: `src/graphql/vtex/` for VTEX API extensions and `src/graphql/thirdParty/` for third-party API extensions. Each must contain `typeDefs/` and `resolvers/` subdirectories.
+MUST place API extension files in the correct directory structure: `src/graphql/vtex/` for VTEX API extensions and `src/graphql/thirdParty/` for third-party API extensions. Each must contain `typeDefs/` and `resolvers/` subdirectories.
 
-**Why**: FastStore's build system discovers and compiles API extensions from these specific directories. Files placed elsewhere will not be included in the GraphQL schema and resolvers will not execute. There will be no error at build time — the extended fields simply won't exist, causing runtime GraphQL errors when components try to query them.
+**Why this matters**
+FastStore's build system discovers and compiles API extensions from these specific directories. Files placed elsewhere will not be included in the GraphQL schema and resolvers will not execute. There will be no error at build time — the extended fields simply won't exist, causing runtime GraphQL errors when components try to query them.
 
-**Detection**: If you see GraphQL type definitions (`.graphql` files) or resolver files outside of `src/graphql/vtex/` or `src/graphql/thirdParty/` → warn that they will not be discovered by the build system. If the `typeDefs/` or `resolvers/` subdirectory is missing → warn about incorrect structure.
+**Detection**
+If you see GraphQL type definitions (`.graphql` files) or resolver files outside of `src/graphql/vtex/` or `src/graphql/thirdParty/` → warn that they will not be discovered by the build system. If the `typeDefs/` or `resolvers/` subdirectory is missing → warn about incorrect structure.
 
-✅ **CORRECT**:
-```typescript
-// Directory structure for VTEX API extension:
-// src/graphql/vtex/typeDefs/product.graphql
-// src/graphql/vtex/resolvers/product.ts
-// src/graphql/vtex/resolvers/index.ts
-
-// src/graphql/vtex/typeDefs/product.graphql
+**Correct**
+```graphql
+# src/graphql/vtex/typeDefs/product.graphql
 type StoreProduct {
   availableInstallments: [Installment]
 }
@@ -246,7 +220,7 @@ const resolvers = {
 export default resolvers
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // WRONG: Resolver placed in src/api/ instead of src/graphql/vtex/resolvers/
 // src/api/resolvers/product.ts
@@ -265,124 +239,34 @@ const productResolver = {
 export default productResolver
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Recommended file layout for API extensions:
 
-### Step 1: Define the GraphQL type definitions
-
-Create the type definition file that extends the existing schema:
-
-```typescript
-// src/graphql/vtex/typeDefs/product.graphql
-// Extend StoreProduct with installment data from VTEX
-type StoreProduct {
-  availableInstallments: [Installment]
-}
-
-type Installment {
-  count: Int!
-  value: Float!
-  totalValue: Float!
-  interestRate: Float!
-}
+```text
+src/
+├── graphql/
+│   ├── vtex/
+│   │   ├── typeDefs/
+│   │   │   └── product.graphql
+│   │   └── resolvers/
+│   │       ├── product.ts
+│   │       └── index.ts
+│   └── thirdParty/
+│       ├── typeDefs/
+│       │   └── extra.graphql
+│       └── resolvers/
+│           ├── reviews.ts
+│           └── index.ts
+└── fragments/
+    ├── ServerProduct.ts    ← server-side fragment (SSR)
+    └── ClientProduct.ts    ← client-side fragment (post-render)
 ```
 
-### Step 2: Create the resolver
+Minimal API extension — add a field to `StoreProduct`:
 
-Create the resolver that fetches the data from the VTEX API:
-
-```typescript
-// src/graphql/vtex/resolvers/product.ts
-import type { Resolver } from '@faststore/api'
-
-const productResolver: Record<string, Resolver> = {
-  StoreProduct: {
-    availableInstallments: async (root, _args, context) => {
-      const product = await context.clients.commerce.catalog.getProduct(
-        root.productID
-      )
-
-      const installments =
-        product.items?.[0]?.sellers?.[0]?.commertialOffer?.Installments || []
-
-      return installments.map((inst: any) => ({
-        count: inst.NumberOfInstallments,
-        value: inst.Value,
-        totalValue: inst.TotalValuePlusInterestRate,
-        interestRate: inst.InterestRate,
-      }))
-    },
-  },
-}
-
-export default productResolver
-```
-
-### Step 3: Create the resolver index
-
-Export all resolvers from a single index file:
-
-```typescript
-// src/graphql/vtex/resolvers/index.ts
-import { default as StoreProductResolver } from './product'
-
-const resolvers = {
-  ...StoreProductResolver,
-}
-
-export default resolvers
-```
-
-### Step 4: Create fragments to include the new data in queries
-
-Add fragments to request the new fields in existing queries:
-
-```typescript
-// src/fragments/ServerProduct.ts
-// Server-side fragment — data is available at SSR time
-import { gql } from '@faststore/core/api'
-
-export const fragment = gql(`
-  fragment ServerProduct on Query {
-    product(locator: $locator) {
-      availableInstallments {
-        count
-        value
-        totalValue
-        interestRate
-      }
-    }
-  }
-`)
-```
-
-```typescript
-// src/fragments/ClientProduct.ts
-// Client-side fragment — for data that can load after initial render
-import { gql } from '@faststore/core/api'
-
-export const fragment = gql(`
-  fragment ClientProduct on Query {
-    product(locator: $locator) {
-      availableInstallments {
-        count
-        value
-        totalValue
-        interestRate
-      }
-    }
-  }
-`)
-```
-
-### Complete Example
-
-Full API extension: adding installment information to the Product Details Page.
-
-```typescript
-// 1. Type definitions
-// src/graphql/vtex/typeDefs/product.graphql
+```graphql
+# src/graphql/vtex/typeDefs/product.graphql
 type StoreProduct {
   availableInstallments: [Installment]
 }
@@ -396,7 +280,6 @@ type Installment {
 ```
 
 ```typescript
-// 2. Resolver
 // src/graphql/vtex/resolvers/product.ts
 import type { Resolver } from '@faststore/api'
 
@@ -422,20 +305,9 @@ const productResolver: Record<string, Resolver> = {
 export default productResolver
 ```
 
-```typescript
-// 3. Resolver index
-// src/graphql/vtex/resolvers/index.ts
-import { default as StoreProductResolver } from './product'
-
-const resolvers = {
-  ...StoreProductResolver,
-}
-
-export default resolvers
-```
+Include the new field in queries via fragments:
 
 ```typescript
-// 4. Server fragment
 // src/fragments/ServerProduct.ts
 import { gql } from '@faststore/core/api'
 
@@ -453,128 +325,10 @@ export const fragment = gql(`
 `)
 ```
 
-```typescript
-// 5. Component consuming the extended data
-// src/components/ProductInstallments.tsx
-import React from 'react'
-import { usePage } from '@faststore/core'
-import type { PDPContext } from '@faststore/core'
-import { useSession } from '@faststore/sdk'
-
-interface Installment {
-  count: number
-  value: number
-  totalValue: number
-  interestRate: number
-}
-
-export default function ProductInstallments() {
-  const context = usePage<PDPContext>()
-  const { currency, locale } = useSession()
-
-  const formatter = new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency: currency.code,
-  })
-
-  const installments: Installment[] =
-    (context as any)?.data?.product?.availableInstallments || []
-
-  if (installments.length === 0) {
-    return null
-  }
-
-  // Find the best installment option (most installments with 0% interest)
-  const bestNoInterest = installments
-    .filter((inst) => inst.interestRate === 0)
-    .sort((a, b) => b.count - a.count)[0]
-
-  const bestOverall = installments.sort((a, b) => b.count - a.count)[0]
-
-  return (
-    <div data-fs-installments>
-      {bestNoInterest && (
-        <p data-fs-installment-highlight>
-          <strong>{bestNoInterest.count}x</strong> of{' '}
-          <strong>{formatter.format(bestNoInterest.value)}</strong> interest-free
-        </p>
-      )}
-      {bestOverall && bestOverall.count !== bestNoInterest?.count && (
-        <p data-fs-installment-option>
-          or {bestOverall.count}x of {formatter.format(bestOverall.value)}
-          {bestOverall.interestRate > 0 &&
-            ` (${bestOverall.interestRate}% interest)`}
-        </p>
-      )}
-    </div>
-  )
-}
-```
-
-```typescript
-// 6. Use in an override to add installments to the ProductDetails section
-// src/components/overrides/ProductDetails.tsx
-import { getOverriddenSection } from '@faststore/core'
-import { ProductDetailsSection } from '@faststore/core'
-
-import ProductInstallments from '../ProductInstallments'
-
-const OverriddenProductDetails = getOverriddenSection({
-  Section: ProductDetailsSection,
-  components: {
-    // Add installment info below the price (using an overridable slot)
-    __experimentalProductInstallments: { Component: ProductInstallments },
-  },
-})
-
-export default OverriddenProductDetails
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Direct REST Calls from the Browser
-
-**What happens**: Developer uses `fetch()` or `axios` in React components to call VTEX REST APIs directly (e.g., `/api/catalog/pvt/product/`, `/api/checkout/pub/orderForm/`) instead of using the FastStore GraphQL API.
-
-**Why it fails**: Direct REST calls from the browser create CORS issues (VTEX APIs don't allow cross-origin requests from storefronts by default). They bypass FastStore's caching layer, causing redundant requests and slower page loads. They expose the VTEX account name and API structure to the client. Private API endpoints (`/pvt/`) require authentication headers that cannot be safely included in client-side code.
-
-**Fix**: Use the GraphQL API for all data needs. If the data isn't available in the default schema, extend the API with custom types and resolvers in `src/graphql/vtex/`. The resolver executes on the server where it can safely call VTEX REST APIs.
-
-```typescript
-// Create an API extension to access the data server-side:
-// src/graphql/vtex/resolvers/customData.ts
-import type { Resolver } from '@faststore/api'
-
-const customDataResolver: Record<string, Resolver> = {
-  StoreProduct: {
-    specifications: async (root, _args, context) => {
-      // Server-side: safe to call VTEX REST APIs
-      const product = await context.clients.commerce.catalog.getProduct(
-        root.productID
-      )
-      return product.allSpecifications || []
-    },
-  },
-}
-
-export default customDataResolver
-```
-
----
-
-### Anti-Pattern: API Keys in Client-Side Code
-
-**What happens**: Developer hardcodes VTEX API keys (`VTEX_APP_KEY`, `VTEX_APP_TOKEN`) in client-side JavaScript, or adds them as `NEXT_PUBLIC_` environment variables, making them visible in the browser bundle.
-
-**Why it fails**: This is a critical security vulnerability. API keys visible in the browser can be extracted by anyone viewing the page source. With VTEX API keys, an attacker can modify the product catalog, access customer order data, change prices, or disrupt store operations. This can lead to data breaches, financial loss, and compliance violations.
-
-**Fix**: Never use API keys in client-side code. Use the FastStore API extension system, where resolvers run server-side and authentication is handled by the `context.clients` object. If you need external API keys for third-party services, use server-side API routes or resolvers.
+Third-party API extension (e.g., product reviews):
 
 ```typescript
 // src/graphql/thirdParty/resolvers/reviews.ts
-// Third-party API key used safely in a server-side resolver
 import type { Resolver } from '@faststore/api'
 
 const REVIEWS_API_KEY = process.env.REVIEWS_API_KEY // Server-only env var (no NEXT_PUBLIC_ prefix)
@@ -591,7 +345,6 @@ const reviewsResolver: Record<string, Resolver> = {
         }
       )
       const data = await response.json()
-
       return {
         averageRating: data.average_rating,
         totalReviews: data.total_count,
@@ -609,86 +362,24 @@ const reviewsResolver: Record<string, Resolver> = {
 export default reviewsResolver
 ```
 
----
+## Common failure modes
 
-### Anti-Pattern: Bypassing GraphQL with Custom API Routes
+- Making direct REST calls to VTEX Catalog APIs from React components — creates CORS issues, bypasses caching, and exposes VTEX account structure to the browser.
+- Exposing API keys (`VTEX_APP_KEY`, `VTEX_APP_TOKEN`) in client-side code or `NEXT_PUBLIC_` environment variables — critical security vulnerability.
+- Placing resolvers or type definitions outside `src/graphql/vtex/` or `src/graphql/thirdParty/` — they will not be discovered by the build system.
+- Creating custom Next.js API routes (`pages/api/`) instead of using the API extension system — bypasses caching, type safety, and request batching.
+- Forgetting to create the resolver index file (`src/graphql/vtex/resolvers/index.ts`) that re-exports all resolvers.
 
-**What happens**: Developer creates Next.js API routes (`pages/api/`) to serve custom data to the storefront, bypassing FastStore's GraphQL layer entirely. They may do this because they're more familiar with REST than GraphQL.
+## Review checklist
 
-**Why it fails**: FastStore explicitly recommends against custom API routes. They don't benefit from FastStore's built-in caching, data normalization, or request batching. They add server-side endpoints that consume resources and must be maintained separately. They bypass GraphQL's type safety and selective field retrieval. Orphaned API routes that are no longer used still consume server resources.
-
-**Fix**: Use the FastStore API extension system. Create type definitions and resolvers in `src/graphql/thirdParty/` for external data or `src/graphql/vtex/` for VTEX platform data. The GraphQL layer provides caching, type safety, and a unified data access pattern.
-
-```typescript
-// Instead of pages/api/product-reviews.ts, use a GraphQL extension:
-
-// src/graphql/thirdParty/typeDefs/extra.graphql
-type Review {
-  author: String
-  rating: Float
-  text: String
-  date: String
-}
-
-type ReviewSummary {
-  averageRating: Float
-  totalReviews: Int
-  reviews: [Review]
-}
-
-type StoreProduct {
-  reviewSummary: ReviewSummary
-}
-```
-
-```typescript
-// src/graphql/thirdParty/resolvers/reviews.ts
-import type { Resolver } from '@faststore/api'
-
-const REVIEWS_API_KEY = process.env.REVIEWS_API_KEY
-
-const reviewsResolver: Record<string, Resolver> = {
-  StoreProduct: {
-    reviewSummary: async (root) => {
-      const response = await fetch(
-        `https://api.reviews-service.com/products/${root.productID}`,
-        {
-          headers: { Authorization: `Bearer ${REVIEWS_API_KEY}` },
-        }
-      )
-      const data = await response.json()
-
-      return {
-        averageRating: data.average_rating,
-        totalReviews: data.total_count,
-        reviews: data.reviews.slice(0, 5).map((r: any) => ({
-          author: r.author_name,
-          rating: r.rating,
-          text: r.review_text,
-          date: r.created_at,
-        })),
-      }
-    },
-  },
-}
-
-export default reviewsResolver
-```
-
-```typescript
-// src/graphql/thirdParty/resolvers/index.ts
-import { default as reviewsResolver } from './reviews'
-
-const resolvers = {
-  ...reviewsResolver,
-}
-
-export default resolvers
-```
+- [ ] Is all catalog data fetched via the FastStore GraphQL API (not direct REST calls from components)?
+- [ ] Are API extension files in `src/graphql/vtex/` or `src/graphql/thirdParty/` with proper `typeDefs/` and `resolvers/` subdirectories?
+- [ ] Does the resolver index file re-export all resolvers?
+- [ ] Are API keys and secrets used only in server-side resolvers (no `NEXT_PUBLIC_` prefix)?
+- [ ] Are fragments created in `src/fragments/` to include new fields in predefined queries?
+- [ ] Are there no custom Next.js API routes that could be replaced with API extensions?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [FastStore API overview](https://developers.vtex.com/docs/guides/faststore/faststore-api-overview) — Introduction to the GraphQL API and its capabilities
 - [API extensions overview](https://developers.vtex.com/docs/guides/faststore/api-extensions-overview) — Guide to extending the FastStore API with custom data
@@ -699,62 +390,48 @@ export default resolvers
 - [GraphQL schema objects](https://developers.vtex.com/docs/guides/faststore/schema-objects) — Reference for all native GraphQL types (StoreProduct, StoreOffer, etc.)
 - [GraphQL queries reference](https://developers.vtex.com/docs/guides/faststore/schema-queries) — All predefined queries available in the FastStore API
 - [API extension troubleshooting](https://developers.vtex.com/docs/guides/faststore/api-extensions-troubleshooting) — Common issues with API extensions and their solutions
-- [FastStore SDK State Management](../faststore-state-management/skill.md) — Related skill for client-side state management with SDK hooks
+- [`faststore-state-management`](../faststore-state-management/skill.md) — Related skill for client-side state management with SDK hooks
 
 ---
 
 # FastStore Section & Component Overrides
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: FastStore's override system for customizing native sections and components. This includes using `getOverriddenSection()` to create section-level overrides, replacing individual components within a section, and passing custom props to native components.
+Use this skill when:
+- You need to customize the behavior or appearance of a FastStore storefront component beyond what theming and design tokens can achieve.
+- You need to replace a native component entirely with a custom implementation.
+- You need to inject custom logic or modify props on native components within a section.
+- You are working with files in `src/components/overrides/`.
 
-**When to use it**: When you need to customize the behavior or appearance of a FastStore storefront component beyond what theming and design tokens can achieve. Use overrides when you need to replace a component entirely, inject custom logic, or modify props on native components.
+Do not use this skill for:
+- Visual-only changes (colors, typography, spacing) — use the `faststore-theming` skill and design tokens instead.
+- Building custom state management for cart, session, or search — use the `faststore-state-management` skill.
+- Extending the GraphQL data layer — use the `faststore-data-fetching` skill.
 
-**What you'll learn**:
-- How to create override files in `src/components/overrides/`
-- How to use `getOverriddenSection()` to customize sections
-- How to override individual components within a section
-- How to pass custom props to native components while preserving integration
+## Decision rules
 
-## Key Concepts
+- Use overrides when theming alone cannot achieve the desired change (e.g., replacing a component, adding logic, changing behavior).
+- Use the `components` map with `{ Component: CustomComponent }` when replacing a native component entirely.
+- Use the `components` map with `{ props: { ... } }` when only changing props on a native component without replacing it.
+- Use the `className` option on `getOverriddenSection()` for wrapper-level styling alongside behavioral changes.
+- Prefer theming with design tokens for purely visual changes — overrides are heavier and more tightly coupled.
+- Only override components listed as overridable in the FastStore native sections documentation. Undocumented component names are silently ignored.
+- Components prefixed with `__experimental` can be overridden but their props are not accessible and may change without notice.
 
-**Essential knowledge before implementation**:
-
-### Concept 1: Sections vs Components
-
-In FastStore, **sections** are top-level layout components that organize and encapsulate other components. For example, the `Hero` section contains `Hero`, `HeroImage`, and `HeroHeader` components. Overrides work at the section level — you override a section and then customize the individual components within it. You cannot override a component outside the context of its parent section.
-
-### Concept 2: The `getOverriddenSection()` Function
-
-`getOverriddenSection()` is the core API for creating overrides. It accepts a configuration object with the original `Section`, an optional `className`, and a `components` map specifying which child components to replace or customize. It returns a new React component that replaces the original section while preserving all native behavior and integrations.
-
-### Concept 3: Override File Convention
-
-Override files live in `src/components/overrides/` and are named after the section they override (e.g., `ProductDetails.tsx` for the `ProductDetails` section). Each file exports the overridden section as default. FastStore automatically discovers and applies overrides from this directory.
-
-**Architecture/Data Flow**:
-```text
-src/components/overrides/[SectionName].tsx
-  → imports Section from @faststore/core
-  → calls getOverriddenSection({ Section, components: {...} })
-  → exports overridden section as default
-  → FastStore renders overridden version in place of native section
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use the Override API — Never Modify FastStore Core
 
-**Rule**: MUST use `getOverriddenSection()` from `@faststore/core` to customize sections. MUST NOT directly modify files in `node_modules/@faststore/` or import internal source files.
+MUST use `getOverriddenSection()` from `@faststore/core` to customize sections. MUST NOT directly modify files in `node_modules/@faststore/` or import internal source files.
 
-**Why**: Modifying `node_modules` is ephemeral (changes are lost on `npm install`) and importing from internal paths like `@faststore/core/src/` creates tight coupling to implementation details that can break on any FastStore update.
+**Why this matters**
+Modifying `node_modules` is ephemeral (changes are lost on `npm install`) and importing from internal paths like `@faststore/core/src/` creates tight coupling to implementation details that can break on any FastStore update.
 
-**Detection**: If you see imports from `@faststore/core/src/` (internal source paths) → STOP. These are private implementation details. Only import from the public API: `@faststore/core` and `@faststore/core/experimental`. If you see direct file edits in `node_modules/@faststore/` → STOP immediately and use the override system instead.
+**Detection**
+If you see imports from `@faststore/core/src/` (internal source paths) → STOP. These are private implementation details. Only import from the public API: `@faststore/core` and `@faststore/core/experimental`. If you see direct file edits in `node_modules/@faststore/` → STOP immediately and use the override system instead.
 
-✅ **CORRECT**:
+**Correct**
 ```typescript
 // src/components/overrides/ProductDetails.tsx
 import { getOverriddenSection } from '@faststore/core'
@@ -772,7 +449,7 @@ const OverriddenProductDetails = getOverriddenSection({
 export default OverriddenProductDetails
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // WRONG: Importing from internal source paths
 import { ProductDetails } from '@faststore/core/src/components/sections/ProductDetails'
@@ -788,13 +465,15 @@ import { ProductDetails } from '@faststore/core/src/components/sections/ProductD
 
 ### Constraint: Override Files Must Live in src/components/overrides/
 
-**Rule**: MUST place override files in the `src/components/overrides/` directory, named after the section being overridden (e.g., `ProductDetails.tsx`).
+MUST place override files in the `src/components/overrides/` directory, named after the section being overridden (e.g., `ProductDetails.tsx`).
 
-**Why**: FastStore's build system scans `src/components/overrides/` to discover and apply section overrides. Files placed elsewhere will not be detected and the override will silently fail — the native section will render instead with no error message.
+**Why this matters**
+FastStore's build system scans `src/components/overrides/` to discover and apply section overrides. Files placed elsewhere will not be detected and the override will silently fail — the native section will render instead with no error message.
 
-**Detection**: If you see override-related code (calls to `getOverriddenSection`) in files outside `src/components/overrides/` → warn that the override will not be applied. Check that the filename matches a valid native section name from the FastStore section list.
+**Detection**
+If you see override-related code (calls to `getOverriddenSection`) in files outside `src/components/overrides/` → warn that the override will not be applied. Check that the filename matches a valid native section name from the FastStore section list.
 
-✅ **CORRECT**:
+**Correct**
 ```typescript
 // src/components/overrides/Alert.tsx
 // File is in the correct directory and named after the Alert section
@@ -813,7 +492,7 @@ const OverriddenAlert = getOverriddenSection({
 export default OverriddenAlert
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // src/components/MyCustomAlert.tsx
 // WRONG: File is NOT in src/components/overrides/
@@ -836,13 +515,15 @@ export default OverriddenAlert
 
 ### Constraint: Override Only Documented Overridable Components
 
-**Rule**: MUST only override components listed as overridable in the FastStore native sections documentation. Components prefixed with `__experimental` can be overridden but their props are not accessible.
+MUST only override components listed as overridable in the FastStore native sections documentation. Components prefixed with `__experimental` can be overridden but their props are not accessible.
 
-**Why**: Attempting to override a component not listed as overridable will silently fail. The override configuration will be ignored and the native component will render. Components marked `__experimental` have unstable prop interfaces that may change without notice.
+**Why this matters**
+Attempting to override a component not listed as overridable will silently fail. The override configuration will be ignored and the native component will render. Components marked `__experimental` have unstable prop interfaces that may change without notice.
 
-**Detection**: If you see a component name in the `components` override map that does not appear in the FastStore list of overridable components for that section → warn that this override may not work. If the component is prefixed with `__experimental` → warn about inaccessible props and instability.
+**Detection**
+If you see a component name in the `components` override map that does not appear in the FastStore list of overridable components for that section → warn that this override may not work. If the component is prefixed with `__experimental` → warn about inaccessible props and instability.
 
-✅ **CORRECT**:
+**Correct**
 ```typescript
 // src/components/overrides/ProductDetails.tsx
 // ProductTitle is a documented overridable component of ProductDetails section
@@ -864,7 +545,7 @@ const OverriddenProductDetails = getOverriddenSection({
 export default OverriddenProductDetails
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // src/components/overrides/ProductDetails.tsx
 // "InternalPriceCalculator" is NOT a documented overridable component
@@ -883,62 +564,22 @@ const OverriddenProductDetails = getOverriddenSection({
 export default OverriddenProductDetails
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Recommended file layout:
 
-### Step 1: Create the overrides directory
-
-Ensure your project has the `src/components/overrides/` directory. If it doesn't exist, create it:
-
-```typescript
-// Terminal command:
-// mkdir -p src/components/overrides
-//
-// Project structure after creation:
-// src/
-//   components/
-//     overrides/    ← override files go here
-//     ...           ← custom components go here
+```text
+src/
+├── components/
+│   ├── overrides/
+│   │   ├── ProductDetails.tsx    ← override file (named after section)
+│   │   ├── Alert.tsx
+│   │   └── simple-alert.module.scss
+│   ├── CustomBuyButton.tsx       ← custom component
+│   └── BoldIcon.tsx
 ```
 
-### Step 2: Create a custom component (if replacing a component)
-
-If you need to replace a native component entirely, create your custom component first. Place it in `src/components/`:
-
-```typescript
-// src/components/CustomBuyButton.tsx
-import React from 'react'
-import { Button as UIButton } from '@faststore/ui'
-import { useCart } from '@faststore/sdk'
-
-interface CustomBuyButtonProps {
-  children?: React.ReactNode
-}
-
-export default function CustomBuyButton({ children }: CustomBuyButtonProps) {
-  const { addItem } = useCart()
-
-  const handleClick = () => {
-    // Custom buy button logic — for example, showing a confirmation toast
-    console.log('Item added to cart')
-  }
-
-  return (
-    <UIButton
-      variant="primary"
-      onClick={handleClick}
-      data-fs-buy-button
-    >
-      {children || 'Add to Cart'}
-    </UIButton>
-  )
-}
-```
-
-### Step 3: Create the override file
-
-Create the override file in `src/components/overrides/` named after the target section:
+Minimal override — replace a component:
 
 ```typescript
 // src/components/overrides/ProductDetails.tsx
@@ -957,9 +598,7 @@ const OverriddenProductDetails = getOverriddenSection({
 export default OverriddenProductDetails
 ```
 
-### Step 4: Override props without replacing the component
-
-If you only need to change a component's props (not replace it entirely), use the `props` key instead of `Component`:
+Override props without replacing the component:
 
 ```typescript
 // src/components/overrides/ProductDetails.tsx
@@ -981,39 +620,7 @@ const OverriddenProductDetails = getOverriddenSection({
 export default OverriddenProductDetails
 ```
 
-### Complete Example
-
-Full end-to-end example: overriding the Alert section with a custom icon and custom styling:
-
-```typescript
-// src/components/BoldIcon.tsx
-import React from 'react'
-
-interface BoldIconProps {
-  width?: number
-  height?: number
-}
-
-export default function BoldIcon({ width = 24, height = 24 }: BoldIconProps) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width={width}
-      height={height}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={3}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <line x1="12" y1="8" x2="12" y2="12" />
-      <line x1="12" y1="16" x2="12.01" y2="16" />
-    </svg>
-  )
-}
-```
+Override with custom styling:
 
 ```typescript
 // src/components/overrides/Alert.tsx
@@ -1034,114 +641,24 @@ const OverriddenAlert = getOverriddenSection({
 export default OverriddenAlert
 ```
 
-```scss
-/* src/components/overrides/simple-alert.module.scss */
-.simpleAlert {
-  [data-fs-alert] {
-    background-color: var(--fs-color-warning-bkg);
-    border-radius: var(--fs-border-radius);
-    padding: var(--fs-spacing-2) var(--fs-spacing-3);
-  }
-}
-```
+## Common failure modes
 
-## Anti-Patterns
+- Monkey-patching `node_modules/@faststore/` or using `patch-package` for changes the override system supports. Changes are lost on install and create maintenance burden.
+- Using CSS `!important` to force visual changes instead of the override API for behavioral changes or design tokens for visual changes.
+- Creating wrapper components around native sections instead of using `getOverriddenSection()`. Wrappers bypass CMS integration, analytics tracking, and section discovery.
+- Placing override files outside `src/components/overrides/` — they will be silently ignored.
+- Overriding a component name not listed in the FastStore overridable components documentation — the override is silently ignored.
 
-**Common mistakes developers make and how to fix them.**
+## Review checklist
 
-### Anti-Pattern: Monkey-Patching FastStore Internals
-
-**What happens**: Developer modifies files inside `node_modules/@faststore/` directly, or patches FastStore source code using `patch-package` for changes that the override system supports.
-
-**Why it fails**: Direct modifications to `node_modules` are not version-controlled and are wiped on every `npm install` or CI build. Using `patch-package` for overridable changes creates unnecessary maintenance burden — patches break on every FastStore update and must be manually reconciled. The override system exists specifically to handle these customizations in a forward-compatible way.
-
-**Fix**: Use `getOverriddenSection()` for all section and component customizations. Reserve `patch-package` only for genuine bug fixes in FastStore that have no override-based workaround.
-
-```typescript
-// src/components/overrides/ProductDetails.tsx
-// Use the override system instead of patching node_modules
-import { getOverriddenSection } from '@faststore/core'
-import { ProductDetailsSection } from '@faststore/core'
-
-import CustomProductTitle from '../CustomProductTitle'
-
-const OverriddenProductDetails = getOverriddenSection({
-  Section: ProductDetailsSection,
-  components: {
-    ProductTitle: { Component: CustomProductTitle },
-  },
-})
-
-export default OverriddenProductDetails
-```
-
----
-
-### Anti-Pattern: Using CSS `!important` Instead of Overrides
-
-**What happens**: Developer uses `!important` declarations in global CSS to force visual changes on FastStore native components instead of using the override API to replace or customize components.
-
-**Why it fails**: `!important` declarations create specificity wars that are difficult to debug and maintain. They can conflict with FastStore's structural styles and design token system. When FastStore updates its CSS, `!important` overrides may produce unexpected results. The override system provides a clean, maintainable way to change both behavior and appearance.
-
-**Fix**: Use the override system to replace components, or use the theming/design token system for visual-only changes.
-
-```typescript
-// For behavioral changes, use overrides:
-// src/components/overrides/ProductDetails.tsx
-import { getOverriddenSection } from '@faststore/core'
-import { ProductDetailsSection } from '@faststore/core'
-
-import CustomBuyButton from '../CustomBuyButton'
-
-const OverriddenProductDetails = getOverriddenSection({
-  Section: ProductDetailsSection,
-  components: {
-    BuyButton: { Component: CustomBuyButton },
-  },
-})
-
-export default OverriddenProductDetails
-
-// For visual-only changes, use design tokens in src/themes/custom-theme.scss:
-// [data-fs-buy-button] {
-//   --fs-button-primary-bkg-color: var(--fs-color-accent-0);
-//   --fs-button-primary-text-color: var(--fs-color-text-inverse);
-// }
-```
-
----
-
-### Anti-Pattern: Wrapper Components Instead of Override API
-
-**What happens**: Developer creates a wrapper component that renders the native FastStore section and adds logic around it (e.g., wrapping `<ProductDetailsSection>` in a custom `<div>` with event handlers), bypassing the override system entirely.
-
-**Why it fails**: Wrapper components do not integrate with FastStore's section discovery, Headless CMS, or analytics tracking. The wrapped section will not appear in the CMS editor for content managers. Props passed from the CMS to the section may not propagate correctly through the wrapper. Analytics events tied to the section lifecycle may not fire.
-
-**Fix**: Use `getOverriddenSection()` with the `className` option for styling wrappers, and the `components` map for behavioral changes.
-
-```typescript
-// src/components/overrides/ProductDetails.tsx
-import { getOverriddenSection } from '@faststore/core'
-import { ProductDetailsSection } from '@faststore/core'
-import styles from './custom-product-details.module.scss'
-
-import CustomBuyButton from '../CustomBuyButton'
-
-// Use className for wrapper-level styling and components for behavior
-const OverriddenProductDetails = getOverriddenSection({
-  Section: ProductDetailsSection,
-  className: styles.customProductDetails,
-  components: {
-    BuyButton: { Component: CustomBuyButton },
-  },
-})
-
-export default OverriddenProductDetails
-```
+- [ ] Is the override file located in `src/components/overrides/` and named after the target section?
+- [ ] Does the file use `getOverriddenSection()` from `@faststore/core`?
+- [ ] Are all overridden component names documented as overridable for that section?
+- [ ] Are imports only from `@faststore/core` or `@faststore/core/experimental` (not internal source paths)?
+- [ ] Could this change be achieved with design tokens instead of an override?
+- [ ] Does the override export as default?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Overrides overview](https://developers.vtex.com/docs/guides/faststore/overrides-overview) — Introduction to the FastStore override system and when to use it
 - [getOverriddenSection function](https://developers.vtex.com/docs/guides/faststore/overrides-getoverriddensection-function) — API reference for the core override function
@@ -1150,68 +667,48 @@ export default OverriddenProductDetails
 - [List of native sections and overridable components](https://developers.vtex.com/docs/guides/faststore/building-sections-list-of-native-sections) — Complete reference of which components can be overridden per section
 - [Creating a new section](https://developers.vtex.com/docs/guides/faststore/building-sections-creating-a-new-section) — Guide for creating custom sections when overrides are insufficient
 - [Troubleshooting overrides](https://developers.vtex.com/docs/troubleshooting/my-store-does-not-reflect-the-overrides-i-created) — Common issues and solutions when overrides don't work
-- [FastStore Theming & Design Tokens](../faststore-theming/skill.md) — Related skill for visual customizations that don't require overrides
+- [`faststore-theming`](../faststore-theming/skill.md) — Related skill for visual customizations that don't require overrides
 
 ---
 
 # FastStore SDK State Management
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The `@faststore/sdk` package and its hooks for managing client-side state in FastStore storefronts. This includes the Cart module (`useCart`), Session module (`useSession`), Search module (`useSearch`), and Analytics module. The SDK manages the state of key ecommerce features in the browser and synchronizes with the VTEX platform via the FastStore API.
+Use this skill when:
+- You are building any interactive ecommerce feature that involves the shopping cart, user session, product search/filtering, or analytics tracking.
+- You need to add, remove, or update cart items.
+- You need to read or change session data (currency, locale, sales channel, postal code).
+- You need to manage faceted search state (sort order, selected facets, pagination).
+- You are working with `@faststore/sdk` hooks (`useCart`, `useSession`, `useSearch`).
 
-**When to use it**: When building any interactive ecommerce feature that involves the shopping cart, user session (currency, locale, channel), product search/filtering, or UI component visibility. The SDK is the single source of truth for these concerns — use its hooks instead of building custom state.
+Do not use this skill for:
+- Visual-only changes — use the `faststore-theming` skill.
+- Replacing or customizing native components — use the `faststore-overrides` skill.
+- Extending the GraphQL schema or fetching custom data — use the `faststore-data-fetching` skill.
 
-**What you'll learn**:
-- How to use `useCart()` for cart operations (add, remove, update items)
-- How to use `useSession()` for session data (currency, locale, channel, person)
-- How to use `useSearch()` for faceted search state (sort, filters, pagination)
-- Why you must never build custom state for cart/session/search when the SDK provides it
+## Decision rules
 
-## Key Concepts
+- Use `useCart()` for all cart operations — it handles platform validation, price verification, and analytics automatically.
+- Use `useSession()` for all session data — it triggers `validateSession` mutations that keep the platform synchronized.
+- Use `useSearch()` within `SearchProvider` for all search state — it synchronizes with URL parameters and supports browser back-button navigation.
+- Do not build custom state management (React Context, Redux, Zustand, `useState`/`useReducer`) for cart, session, or search. The SDK hooks are wired into the FastStore platform integration layer.
+- Always check `isValidating` from `useCart()` and block checkout navigation during validation.
+- Use `sendAnalyticsEvent()` from the SDK for GA4-compatible ecommerce event tracking.
 
-**Essential knowledge before implementation**:
-
-### Concept 1: SDK Module Architecture
-
-The `@faststore/sdk` is organized into four modules, each managing a specific domain of ecommerce state:
-- **Cart**: Shopping cart state — items, quantities, prices, validation status
-- **Session**: User session data — currency, channel, locale, country, person (logged-in user)
-- **Search**: Faceted search state — sort order, selected facets, pagination, URL parameters
-- **Analytics**: GA4-compatible event tracking for ecommerce actions
-
-Each module provides hooks (e.g., `useCart()`) that give components read and write access to the module's state. State is managed in the browser and validated against the VTEX platform via GraphQL mutations.
-
-### Concept 2: Cart Validation
-
-The cart is not just a client-side data structure. When items are added or modified, the SDK validates the cart against the VTEX platform via the FastStore API's `validateCart` mutation. This ensures prices, availability, and promotions are accurate. The `isValidating` flag from `useCart()` indicates whether a validation request is in progress. Always show a loading state during validation to prevent users from checking out with stale data.
-
-### Concept 3: Session and Localization
-
-The session holds runtime context: which sales channel the shopper is in, what currency to display, what locale to use, and the shopper's identity (if logged in). Components like price displays and shipping estimators depend on session data. The `useSession()` hook provides this context. Session changes (e.g., switching locale) trigger re-validation of the cart and re-fetching of product data.
-
-**Architecture/Data Flow**:
-```text
-Browser State (@faststore/sdk)
-  ├── Cart Module → useCart() → validated via FastStore API → VTEX Commerce
-  ├── Session Module → useSession() → validated via FastStore API → VTEX Commerce
-  ├── Search Module → useSearch() → reads/writes URL parameters → triggers queries
-  └── Analytics Module → sendAnalyticsEvent() → GA4 data layer
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use @faststore/sdk for Cart, Session, and Search State
 
-**Rule**: MUST use `@faststore/sdk` hooks (`useCart`, `useSession`, `useSearch`) for managing cart, session, and search state. MUST NOT build custom state management (React Context, Redux, Zustand, useState/useReducer) for these domains.
+MUST use `@faststore/sdk` hooks (`useCart`, `useSession`, `useSearch`) for managing cart, session, and search state. MUST NOT build custom state management (React Context, Redux, Zustand, useState/useReducer) for these domains.
 
-**Why**: The SDK hooks are wired into the FastStore platform integration layer. `useCart()` triggers cart validation mutations. `useSession()` propagates locale/currency changes to all data queries. `useSearch()` synchronizes with URL parameters and triggers search re-fetches. Custom state bypasses all of this — carts won't be validated, prices may be stale, search won't sync with URLs, and analytics events won't fire.
+**Why this matters**
+The SDK hooks are wired into the FastStore platform integration layer. `useCart()` triggers cart validation mutations. `useSession()` propagates locale/currency changes to all data queries. `useSearch()` synchronizes with URL parameters and triggers search re-fetches. Custom state bypasses all of this — carts won't be validated, prices may be stale, search won't sync with URLs, and analytics events won't fire.
 
-**Detection**: If you see `useState` or `useReducer` managing cart items, cart totals, session locale, session currency, or search facets → STOP. These should use `useCart()`, `useSession()`, or `useSearch()` from `@faststore/sdk`. If you see `createContext` with names like `CartContext`, `SessionContext`, or `SearchContext` → STOP. The SDK already provides these contexts.
+**Detection**
+If you see `useState` or `useReducer` managing cart items, cart totals, session locale, session currency, or search facets → STOP. These should use `useCart()`, `useSession()`, or `useSearch()` from `@faststore/sdk`. If you see `createContext` with names like `CartContext`, `SessionContext`, or `SearchContext` → STOP. The SDK already provides these contexts.
 
-✅ **CORRECT**:
+**Correct**
 ```typescript
 // src/components/MiniCart.tsx
 import React from 'react'
@@ -1242,7 +739,7 @@ export default function MiniCart() {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // WRONG: Building a custom cart context instead of using @faststore/sdk
 import React, { createContext, useContext, useReducer } from 'react'
@@ -1288,13 +785,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
 ### Constraint: Always Handle Cart Validation State
 
-**Rule**: MUST check the `isValidating` flag from `useCart()` and show appropriate loading states during cart validation. MUST NOT allow checkout navigation while `isValidating` is `true`.
+MUST check the `isValidating` flag from `useCart()` and show appropriate loading states during cart validation. MUST NOT allow checkout navigation while `isValidating` is `true`.
 
-**Why**: Cart validation is an asynchronous operation that checks items against the VTEX platform for current prices, availability, and applicable promotions. If a user proceeds to checkout during validation, they may see stale prices or encounter errors. The `isValidating` flag exists to prevent this.
+**Why this matters**
+Cart validation is an asynchronous operation that checks items against the VTEX platform for current prices, availability, and applicable promotions. If a user proceeds to checkout during validation, they may see stale prices or encounter errors. The `isValidating` flag exists to prevent this.
 
-**Detection**: If you see `useCart()` destructured without `isValidating` in components that have checkout links or "Proceed to Checkout" buttons → warn that the validation state is not being handled. If you see a checkout link or button that does not check `isValidating` before navigating → warn about potential stale cart data.
+**Detection**
+If you see `useCart()` destructured without `isValidating` in components that have checkout links or "Proceed to Checkout" buttons → warn that the validation state is not being handled. If you see a checkout link or button that does not check `isValidating` before navigating → warn about potential stale cart data.
 
-✅ **CORRECT**:
+**Correct**
 ```typescript
 // src/components/CartSummary.tsx
 import React from 'react'
@@ -1332,7 +831,7 @@ export default function CartSummary() {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // WRONG: Ignoring cart validation state
 import React from 'react'
@@ -1357,13 +856,15 @@ export default function CartSummary() {
 
 ### Constraint: Do Not Store Session Data in localStorage
 
-**Rule**: MUST use `useSession()` from `@faststore/sdk` for accessing session data (currency, locale, channel, person). MUST NOT read/write session data directly to `localStorage` or `sessionStorage`.
+MUST use `useSession()` from `@faststore/sdk` for accessing session data (currency, locale, channel, person). MUST NOT read/write session data directly to `localStorage` or `sessionStorage`.
 
-**Why**: The SDK's session module manages synchronization with the VTEX platform. When session data changes, the SDK triggers a `validateSession` mutation that updates the server-side session and re-validates the cart. Writing directly to `localStorage` bypasses this validation — the platform won't know about the change, prices may display in the wrong currency, and cart items may not reflect the correct sales channel.
+**Why this matters**
+The SDK's session module manages synchronization with the VTEX platform. When session data changes, the SDK triggers a `validateSession` mutation that updates the server-side session and re-validates the cart. Writing directly to `localStorage` bypasses this validation — the platform won't know about the change, prices may display in the wrong currency, and cart items may not reflect the correct sales channel.
 
-**Detection**: If you see `localStorage.getItem` or `localStorage.setItem` with keys related to session data (currency, locale, channel, region, postalCode) → STOP. These should be managed through `useSession()`. If you see `sessionStorage` used for the same purpose → STOP.
+**Detection**
+If you see `localStorage.getItem` or `localStorage.setItem` with keys related to session data (currency, locale, channel, region, postalCode) → STOP. These should be managed through `useSession()`. If you see `sessionStorage` used for the same purpose → STOP.
 
-✅ **CORRECT**:
+**Correct**
 ```typescript
 // src/components/LocaleSwitcher.tsx
 import React from 'react'
@@ -1400,7 +901,7 @@ export default function LocaleSwitcher() {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // WRONG: Managing session data manually via localStorage
 import React, { useState, useEffect } from 'react'
@@ -1431,152 +932,9 @@ export default function LocaleSwitcher() {
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
-
-### Step 1: Add items to the cart with useCart
-
-Use `useCart()` to manage the shopping cart. The `addItem` function accepts an item matching the SDK's cart item shape:
-
-```typescript
-// src/components/AddToCartButton.tsx
-import React from 'react'
-import { useCart } from '@faststore/sdk'
-import { Button } from '@faststore/ui'
-
-interface AddToCartButtonProps {
-  product: {
-    id: string
-    name: string
-    image: { url: string; alternateName: string }
-    sku: string
-    price: number
-    listPrice: number
-    seller: { identifier: string }
-  }
-}
-
-export default function AddToCartButton({ product }: AddToCartButtonProps) {
-  const { addItem } = useCart()
-
-  const handleAddToCart = () => {
-    addItem({
-      id: product.sku,
-      price: product.price,
-      listPrice: product.listPrice,
-      quantity: 1,
-      seller: product.seller,
-      itemOffered: {
-        sku: product.sku,
-        name: product.name,
-        image: [product.image],
-        isVariantOf: { productGroupID: product.id, name: product.name },
-      },
-    })
-  }
-
-  return (
-    <Button variant="primary" onClick={handleAddToCart} data-fs-buy-button>
-      Add to Cart
-    </Button>
-  )
-}
-```
-
-### Step 2: Read session data with useSession
-
-Use `useSession()` to access the current session context. This is useful for displaying localized content:
-
-```typescript
-// src/components/PriceDisplay.tsx
-import React from 'react'
-import { useSession } from '@faststore/sdk'
-
-interface PriceDisplayProps {
-  price: number
-  listPrice: number
-}
-
-export default function PriceDisplay({ price, listPrice }: PriceDisplayProps) {
-  const { currency, locale } = useSession()
-
-  const formatter = new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency: currency.code,
-  })
-
-  const hasDiscount = listPrice > price
-
-  return (
-    <div data-fs-price-display>
-      {hasDiscount && (
-        <span data-fs-price-listing>{formatter.format(listPrice)}</span>
-      )}
-      <span data-fs-price-selling>{formatter.format(price)}</span>
-    </div>
-  )
-}
-```
-
-### Step 3: Build search interactions with useSearch
-
-Use `useSearch()` to read and modify the search state. This hook works within the `SearchProvider` context:
-
-```typescript
-// src/components/SortDropdown.tsx
-import React from 'react'
-import { useSearch } from '@faststore/sdk'
-
-const SORT_OPTIONS = {
-  score_desc: 'Relevance',
-  price_asc: 'Price: Low to High',
-  price_desc: 'Price: High to Low',
-  orders_desc: 'Best Sellers',
-  name_asc: 'Name: A-Z',
-  name_desc: 'Name: Z-A',
-  release_desc: 'Newest',
-  discount_desc: 'Biggest Discount',
-} as const
-
-type SortKey = keyof typeof SORT_OPTIONS
-
-export default function SortDropdown() {
-  const { state, setState } = useSearch()
-
-  const handleSortChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const newSort = event.target.value as SortKey
-
-    setState({
-      ...state,
-      sort: newSort,
-      page: 0, // Reset to first page on sort change
-    })
-  }
-
-  return (
-    <div data-fs-sort-dropdown>
-      <label htmlFor="sort-select">Sort by:</label>
-      <select
-        id="sort-select"
-        value={state.sort}
-        onChange={handleSortChange}
-        data-fs-select
-      >
-        {Object.entries(SORT_OPTIONS).map(([key, label]) => (
-          <option key={key} value={key}>
-            {label}
-          </option>
-        ))}
-      </select>
-    </div>
-  )
-}
-```
-
-### Complete Example
-
-Full shopping cart component using multiple SDK hooks together:
+Recommended usage of SDK hooks together:
 
 ```typescript
 // src/components/CartDrawer.tsx
@@ -1623,66 +981,39 @@ export default function CartDrawer() {
       <ul data-fs-cart-items>
         {items.map((item) => (
           <li key={item.id} data-fs-cart-item>
-            <img
-              src={item.itemOffered.image[0]?.url}
-              alt={item.itemOffered.image[0]?.alternateName}
-              width={72}
-              height={72}
-            />
-            <div data-fs-cart-item-details>
-              <span data-fs-cart-item-name>
-                {item.itemOffered.name}
-              </span>
-              <span data-fs-cart-item-price>
-                {formatter.format(item.price)}
-              </span>
-              <div data-fs-cart-item-quantity>
-                <Button
-                  variant="tertiary"
-                  onClick={() =>
-                    updateItemQuantity(item.id, item.quantity - 1)
-                  }
-                  disabled={item.quantity <= 1}
-                  aria-label="Decrease quantity"
-                >
-                  -
-                </Button>
-                <span>{item.quantity}</span>
-                <Button
-                  variant="tertiary"
-                  onClick={() =>
-                    updateItemQuantity(item.id, item.quantity + 1)
-                  }
-                  aria-label="Increase quantity"
-                >
-                  +
-                </Button>
-              </div>
+            <span data-fs-cart-item-name>{item.itemOffered.name}</span>
+            <span data-fs-cart-item-price>{formatter.format(item.price)}</span>
+            <div data-fs-cart-item-quantity>
               <Button
                 variant="tertiary"
-                onClick={() => removeItem(item.id)}
-                aria-label={`Remove ${item.itemOffered.name}`}
+                onClick={() => updateItemQuantity(item.id, item.quantity - 1)}
+                disabled={item.quantity <= 1}
               >
-                Remove
+                -
+              </Button>
+              <span>{item.quantity}</span>
+              <Button
+                variant="tertiary"
+                onClick={() => updateItemQuantity(item.id, item.quantity + 1)}
+              >
+                +
               </Button>
             </div>
+            <Button variant="tertiary" onClick={() => removeItem(item.id)}>
+              Remove
+            </Button>
           </li>
         ))}
       </ul>
 
       <div data-fs-cart-summary>
-        <div data-fs-cart-subtotal>
-          <span>Subtotal</span>
-          <span>{formatter.format(subtotal)}</span>
-        </div>
+        <span>Subtotal: {formatter.format(subtotal)}</span>
         <a
           href="/checkout"
           data-fs-checkout-button
           aria-disabled={isValidating}
           onClick={(e) => {
-            if (isValidating) {
-              e.preventDefault()
-            }
+            if (isValidating) e.preventDefault()
           }}
         >
           {isValidating ? 'Updating cart...' : 'Proceed to Checkout'}
@@ -1693,81 +1024,10 @@ export default function CartDrawer() {
 }
 ```
 
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Custom Cart Context
-
-**What happens**: Developer creates a React Context with `createContext` and `useReducer` to manage cart state, duplicating the entire cart data model and operations that `@faststore/sdk` already provides.
-
-**Why it fails**: The custom context is disconnected from the VTEX platform. Items added to the custom cart are never validated — prices may be outdated, items may be out of stock, and promotions won't be applied. When the user navigates to checkout (which uses the SDK's cart), the custom cart state won't be present. Analytics events for add-to-cart, remove-from-cart, and view-cart won't fire.
-
-**Fix**: Use `useCart()` from `@faststore/sdk`. It provides `addItem`, `removeItem`, `updateItemQuantity`, `items`, `totalItems`, `isValidating`, and `isEmpty` — everything needed for cart management.
+Search state with `useSearch()`:
 
 ```typescript
-// Use the SDK's useCart hook — it handles platform validation and analytics
-import { useCart } from '@faststore/sdk'
-
-export default function CartWidget() {
-  const { items, totalItems, isValidating, addItem, removeItem } = useCart()
-
-  return (
-    <div data-fs-cart-widget>
-      <span>{totalItems} items</span>
-      {isValidating && <span>Updating...</span>}
-    </div>
-  )
-}
-```
-
----
-
-### Anti-Pattern: localStorage for Session Data
-
-**What happens**: Developer stores session-related data (locale, currency, region, postal code, sales channel) in `localStorage` and reads it directly in components, bypassing the SDK's session module.
-
-**Why it fails**: Session changes stored in `localStorage` are invisible to the VTEX platform. The cart will not be re-validated for the new locale/currency. Product prices will display in the wrong currency. Search results may not reflect the correct sales channel. The SDK's `validateSession` mutation — which ensures the platform is synchronized — never fires.
-
-**Fix**: Use `useSession()` and `setSession()` from `@faststore/sdk`. All session state changes will be validated against the platform and propagated to dependent queries.
-
-```typescript
-import { useSession } from '@faststore/sdk'
-
-export default function RegionSelector() {
-  const { postalCode, setSession } = useSession()
-
-  const handlePostalCodeChange = (newPostalCode: string) => {
-    // setSession validates against the platform and updates all dependent data
-    setSession({ postalCode: newPostalCode })
-  }
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault()
-        const input = e.currentTarget.elements.namedItem('postalCode') as HTMLInputElement
-        handlePostalCodeChange(input.value)
-      }}
-    >
-      <input name="postalCode" defaultValue={postalCode} placeholder="Enter ZIP code" />
-      <button type="submit">Update</button>
-    </form>
-  )
-}
-```
-
----
-
-### Anti-Pattern: Custom Search State Management
-
-**What happens**: Developer builds a custom search state system using `useState` or `useReducer` to track sort order, selected facets, and pagination, then manually constructs URLs or API calls based on this state.
-
-**Why it fails**: The SDK's search module is tightly integrated with URL parameters — the search state IS the URL. When a user shares a link or uses the browser's back button, the SDK automatically restores the search state from the URL. A custom system would lose state on navigation, produce URLs that don't reflect the current search, and break the back-button experience. It also bypasses the SDK's optimized query generation for the FastStore API.
-
-**Fix**: Use `useSearch()` within the `SearchProvider` context. The SDK handles URL synchronization, facet state, sort order, and pagination automatically.
-
-```typescript
+// src/components/FacetFilter.tsx
 import { useSearch } from '@faststore/sdk'
 
 export default function FacetFilter() {
@@ -1802,9 +1062,24 @@ export default function FacetFilter() {
 }
 ```
 
-## Reference
+## Common failure modes
 
-**Links to VTEX documentation and related resources.**
+- Creating a custom React Context for cart state (`CartContext`, `useReducer`) — disconnects from VTEX platform validation, analytics, and checkout.
+- Storing session data (locale, currency, postal code) in `localStorage` — the SDK's `validateSession` mutation never fires, so the platform is out of sync.
+- Building custom search state with `useState` — loses URL synchronization, breaks back-button navigation, and bypasses the SDK's optimized query generation.
+- Ignoring the `isValidating` flag from `useCart()` — users can proceed to checkout with stale prices or out-of-stock items.
+- Using `useCart_unstable` or `useSession_unstable` hooks without understanding they have unstable interfaces that may change.
+
+## Review checklist
+
+- [ ] Is cart state managed exclusively via `useCart()` from `@faststore/sdk`?
+- [ ] Is session data accessed exclusively via `useSession()` from `@faststore/sdk`?
+- [ ] Is search state managed via `useSearch()` within a `SearchProvider` context?
+- [ ] Is the `isValidating` flag checked before allowing checkout navigation?
+- [ ] Is there no custom React Context, Redux, or Zustand store duplicating SDK state?
+- [ ] Is there no direct `localStorage`/`sessionStorage` access for session-related data?
+
+## Reference
 
 - [FastStore SDK overview](https://developers.vtex.com/docs/guides/faststore/sdk-overview) — Introduction to the SDK modules and their responsibilities
 - [useCart hook](https://developers.vtex.com/docs/guides/faststore/sdk-use-cart) — API reference for the cart hook with all properties and functions
@@ -1814,70 +1089,49 @@ export default function FacetFilter() {
 - [SearchProvider](https://developers.vtex.com/docs/guides/faststore/search-search-provider) — Context provider required for useSearch to function
 - [Analytics module](https://developers.vtex.com/docs/guides/faststore/sdk-analytics) — GA4-compatible analytics event tracking
 - [Experimental hooks and components](https://developers.vtex.com/docs/guides/faststore/sdk-experimental-exports) — Unstable hooks for advanced use cases (useCart_unstable, useSession_unstable)
-- [FastStore Data Layer & API Integration](../faststore-data-fetching/skill.md) — Related skill for fetching product data via the GraphQL API
+- [`faststore-data-fetching`](../faststore-data-fetching/skill.md) — Related skill for fetching product data via the GraphQL API
 
 ---
 
 # FastStore Theming & Design Tokens
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: FastStore's theming system, including design tokens (global and local), the Brandless default theme, custom theme creation, and component-level styling using Sass and CSS custom properties.
+Use this skill when:
+- You need to change the visual appearance of a FastStore storefront — colors, typography, spacing, borders, or component-specific styles.
+- You are working with files in `src/themes/` or creating `custom-theme.scss`.
+- You need to customize individual component styles using local tokens and `[data-fs-*]` data attributes.
+- You are setting up a brand identity on top of the Brandless default theme.
 
-**When to use it**: When you need to change the visual appearance of a FastStore storefront — colors, typography, spacing, borders, or component-specific styles — without changing component behavior. Theming is the first tool to reach for before considering overrides.
+Do not use this skill for:
+- Changes that require replacing a component, injecting logic, or modifying behavior — use the `faststore-overrides` skill.
+- Client-side state management — use the `faststore-state-management` skill.
+- Data fetching or API extensions — use the `faststore-data-fetching` skill.
 
-**What you'll learn**:
-- How global and local design tokens work together in the token hierarchy
-- How to create and apply a custom theme in `src/themes/`
-- How to style individual components using local tokens and data attributes
-- How to maintain consistency using the Brandless architecture
+## Decision rules
 
-## Key Concepts
+- Use theming as the first approach before considering overrides — it is lighter and more maintainable.
+- Use global tokens (`:root` scope) when the change should propagate store-wide (e.g., brand colors, font families).
+- Use local tokens (`[data-fs-*]` scope) when the change applies to a single component (e.g., button background color).
+- Use `[data-fs-*]` data attributes to target components — never use `.fs-*` class names or generic tag selectors.
+- Place all theme files in `src/themes/` with `custom-theme.scss` as the entry point — files elsewhere are not discovered.
+- Reference design tokens via `var(--fs-*)` instead of hardcoding hex colors, pixel sizes, or font values.
+- Use CSS modules for custom (non-FastStore) components to avoid conflicting with FastStore's structural styles.
 
-**Essential knowledge before implementation**:
-
-### Concept 1: Design Tokens
-
-Design tokens are named CSS custom properties (variables) that define the visual properties of your store. FastStore organizes tokens into two tiers:
-- **Global tokens** define system-wide values: colors, typography, spacing, borders, and transitions. They follow the naming pattern `--fs-{type}-{category}-{variant}` (e.g., `--fs-color-main-0`, `--fs-spacing-3`, `--fs-text-size-body`).
-- **Local tokens** are component-specific and typically inherit from global tokens. They follow the pattern `--fs-{component}-{property}` (e.g., `--fs-button-primary-bkg-color`).
-
-Changing a global token propagates through all components that reference it. Changing a local token affects only that component.
-
-### Concept 2: Brandless Architecture
-
-Brandless is FastStore's default theme — a minimal, unopinionated foundation composed of two layers:
-- **Structural Styles**: Foundational design patterns and interaction behaviors (show/hide menus, layout grids). These should rarely be modified.
-- **Theme Layer**: The customizable layer where branding happens. This is where you modify design tokens to change colors, typography, spacing, and other visual properties.
-
-The Brandless base tokens are defined in `@faststore/ui` at `src/styles/base/tokens.scss`. Your custom theme overrides these values.
-
-### Concept 3: Custom Theme Files
-
-Custom themes live in `src/themes/` as `.scss` files. The main entry point is `src/themes/custom-theme.scss`. This file is where you override global tokens and add component-specific styling using data attributes. FastStore's build process automatically picks up this file.
-
-**Architecture/Data Flow**:
-```text
-@faststore/ui base tokens (Brandless defaults)
-  → src/themes/custom-theme.scss (your global token overrides)
-    → Component local tokens (inherit from globals unless explicitly overridden)
-      → Rendered component styles
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use Design Tokens — Not Inline Styles
 
-**Rule**: MUST use design tokens (global or local) to style FastStore components. MUST NOT use inline `style={}` props on FastStore components for theming purposes.
+MUST use design tokens (global or local) to style FastStore components. MUST NOT use inline `style={}` props on FastStore components for theming purposes.
 
-**Why**: Inline styles bypass the design token hierarchy, cannot be overridden by themes, do not participate in responsive breakpoints, and create maintenance nightmares. They also defeat CSS caching since styles are embedded in HTML. Design tokens ensure consistency and allow store-wide changes from a single file.
+**Why this matters**
+Inline styles bypass the design token hierarchy, cannot be overridden by themes, do not participate in responsive breakpoints, and create maintenance nightmares. They also defeat CSS caching since styles are embedded in HTML. Design tokens ensure consistency and allow store-wide changes from a single file.
 
-**Detection**: If you see `style={{` or `style={` on FastStore native components (components imported from `@faststore/ui` or `@faststore/core`) → warn that this bypasses the theming system. Suggest using design tokens or CSS modules instead. Exception: inline styles are acceptable on fully custom components that are not part of the FastStore UI library.
+**Detection**
+If you see `style={{` or `style={` on FastStore native components (components imported from `@faststore/ui` or `@faststore/core`) → warn that this bypasses the theming system. Suggest using design tokens or CSS modules instead. Exception: inline styles are acceptable on fully custom components that are not part of the FastStore UI library.
 
-✅ **CORRECT**:
-```typescript
+**Correct**
+```scss
 // src/themes/custom-theme.scss
 // Override the BuyButton's primary background color using design tokens
 [data-fs-buy-button] {
@@ -1891,7 +1145,7 @@ Custom themes live in `src/themes/` as `.scss` files. The main entry point is `s
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // WRONG: Using inline styles on a FastStore component
 import { BuyButton } from '@faststore/ui'
@@ -1914,14 +1168,16 @@ function ProductActions() {
 
 ### Constraint: Place Theme Files in src/themes/
 
-**Rule**: MUST place custom theme SCSS files in the `src/themes/` directory. The primary theme file must be named `custom-theme.scss`.
+MUST place custom theme SCSS files in the `src/themes/` directory. The primary theme file must be named `custom-theme.scss`.
 
-**Why**: FastStore's build system imports theme files from `src/themes/custom-theme.scss`. Files placed elsewhere will not be picked up by the build and your token overrides will have no effect. There will be no error — the default Brandless theme will render instead.
+**Why this matters**
+FastStore's build system imports theme files from `src/themes/custom-theme.scss`. Files placed elsewhere will not be picked up by the build and your token overrides will have no effect. There will be no error — the default Brandless theme will render instead.
 
-**Detection**: If you see token override declarations (variables starting with `--fs-`) in SCSS files outside `src/themes/` → warn that these may not be applied. If the file `src/themes/custom-theme.scss` does not exist in the project → warn that no custom theme is active.
+**Detection**
+If you see token override declarations (variables starting with `--fs-`) in SCSS files outside `src/themes/` → warn that these may not be applied. If the file `src/themes/custom-theme.scss` does not exist in the project → warn that no custom theme is active.
 
-✅ **CORRECT**:
-```typescript
+**Correct**
+```scss
 // src/themes/custom-theme.scss
 // Global token overrides — applied store-wide
 :root {
@@ -1948,8 +1204,8 @@ function ProductActions() {
 }
 ```
 
-❌ **WRONG**:
-```typescript
+**Wrong**
+```scss
 // src/styles/my-theme.scss
 // WRONG: This file is in src/styles/, not src/themes/
 // FastStore will NOT import this file. Token overrides will be ignored.
@@ -1966,14 +1222,16 @@ function ProductActions() {
 
 ### Constraint: Use Data Attributes for Component Targeting
 
-**Rule**: MUST use FastStore's `data-fs-*` data attributes to target components in theme SCSS files. MUST NOT use class names or tag selectors to target FastStore native components.
+MUST use FastStore's `data-fs-*` data attributes to target components in theme SCSS files. MUST NOT use class names or tag selectors to target FastStore native components.
 
-**Why**: FastStore components use data attributes as their public styling API (e.g., `data-fs-button`, `data-fs-price`, `data-fs-hero`). Class names are implementation details that can change between versions. Using data attributes ensures your theme survives FastStore updates. Each component documents its available data attributes in the customization section of its docs.
+**Why this matters**
+FastStore components use data attributes as their public styling API (e.g., `data-fs-button`, `data-fs-price`, `data-fs-hero`). Class names are implementation details that can change between versions. Using data attributes ensures your theme survives FastStore updates. Each component documents its available data attributes in the customization section of its docs.
 
-**Detection**: If you see CSS selectors targeting `.fs-*` class names or generic tag selectors (`button`, `h1`, `div`) to style FastStore components → warn about fragility. Suggest using `[data-fs-*]` selectors instead.
+**Detection**
+If you see CSS selectors targeting `.fs-*` class names or generic tag selectors (`button`, `h1`, `div`) to style FastStore components → warn about fragility. Suggest using `[data-fs-*]` selectors instead.
 
-✅ **CORRECT**:
-```typescript
+**Correct**
+```scss
 // src/themes/custom-theme.scss
 // Target the Hero section using its data attribute
 [data-fs-hero] {
@@ -1992,8 +1250,8 @@ function ProductActions() {
 }
 ```
 
-❌ **WRONG**:
-```typescript
+**Wrong**
+```scss
 // src/themes/custom-theme.scss
 // WRONG: Targeting by class names — these are internal and may change
 .fs-hero {
@@ -2011,55 +1269,36 @@ section > div > h1 {
 // These are fragile selectors that break when FastStore restructures its HTML.
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Recommended file layout:
 
-### Step 1: Create the custom theme file
+```text
+src/
+└── themes/
+    └── custom-theme.scss    ← main entry point (auto-imported by FastStore)
+```
 
-Create the `src/themes/` directory and the `custom-theme.scss` file:
+Minimal custom theme:
 
-```typescript
-// File: src/themes/custom-theme.scss
-// This file is automatically imported by FastStore's build system.
+```scss
+// src/themes/custom-theme.scss
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap');
 
-// --------------------------------------------------------
 // Global Token Overrides
-// --------------------------------------------------------
-// Override Brandless defaults to match your brand identity.
-
 :root {
-  // Colors
   --fs-color-main-0: #003232;
   --fs-color-main-1: #004c4c;
-  --fs-color-main-2: #006666;
-  --fs-color-main-3: #008080;
-  --fs-color-main-4: #00b3b3;
-
   --fs-color-accent-0: #e31c58;
   --fs-color-accent-1: #c4174d;
 
-  // Typography
   --fs-text-face-body: 'Inter', -apple-system, system-ui, sans-serif;
   --fs-text-face-title: 'Poppins', var(--fs-text-face-body);
 }
-```
 
-### Step 2: Add component-specific token overrides
-
-Below the global overrides, add component-level customizations using data attributes:
-
-```typescript
-// File: src/themes/custom-theme.scss (continued)
-
-// --------------------------------------------------------
-// FS UI Components
-// --------------------------------------------------------
-// Customize individual component styles using local tokens.
-
+// Component-specific overrides
 [data-fs-button] {
   --fs-button-border-radius: var(--fs-border-radius-pill);
-  --fs-button-padding: 0 var(--fs-spacing-5);
 
   &[data-fs-button-variant="primary"] {
     --fs-button-primary-bkg-color: var(--fs-color-accent-0);
@@ -2079,179 +1318,10 @@ Below the global overrides, add component-level customizations using data attrib
 }
 ```
 
-### Step 3: Add fonts (if using custom fonts)
+For custom (non-FastStore) components, use CSS modules to avoid conflicts:
 
-If your brand uses custom fonts, import them in the theme file and reference them via tokens:
-
-```typescript
-// File: src/themes/custom-theme.scss (at the top of the file)
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap');
-
-// Then in your :root block:
-:root {
-  --fs-text-face-body: 'Inter', -apple-system, system-ui, sans-serif;
-  --fs-text-face-title: 'Poppins', var(--fs-text-face-body);
-
-  --fs-text-weight-light: 400;
-  --fs-text-weight-regular: 500;
-  --fs-text-weight-bold: 700;
-  --fs-text-weight-black: 800;
-}
-```
-
-### Complete Example
-
-Full custom theme file for a branded store:
-
-```typescript
-// File: src/themes/custom-theme.scss
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap');
-
-// --------------------------------------------------------
-// Global Token Overrides
-// --------------------------------------------------------
-:root {
-  // Brand Colors
-  --fs-color-main-0: #003232;
-  --fs-color-main-1: #004c4c;
-  --fs-color-main-2: #006666;
-  --fs-color-main-3: #008080;
-  --fs-color-main-4: #00b3b3;
-
-  --fs-color-accent-0: #e31c58;
-  --fs-color-accent-1: #c4174d;
-  --fs-color-accent-2: #a51342;
-  --fs-color-accent-3: #870f37;
-
-  // Typography
-  --fs-text-face-body: 'Inter', -apple-system, system-ui, sans-serif;
-  --fs-text-face-title: 'Poppins', var(--fs-text-face-body);
-  --fs-text-size-title-huge: 3.5rem;
-  --fs-text-size-title-page: 2.25rem;
-  --fs-text-size-title-section: 1.75rem;
-  --fs-text-size-title-subsection: 1.25rem;
-
-  // Spacing
-  --fs-grid-max-width: 1440px;
-  --fs-grid-padding: 0 var(--fs-spacing-5);
-
-  // Borders
-  --fs-border-radius: 0.375rem;
-  --fs-border-radius-pill: 100px;
-  --fs-border-color: #e0e0e0;
-  --fs-border-color-light: #f0f0f0;
-}
-
-// --------------------------------------------------------
-// FS UI Components
-// --------------------------------------------------------
-
-[data-fs-button] {
-  --fs-button-border-radius: var(--fs-border-radius);
-  --fs-button-padding: 0 var(--fs-spacing-5);
-
-  &[data-fs-button-variant="primary"] {
-    --fs-button-primary-bkg-color: var(--fs-color-accent-0);
-    --fs-button-primary-bkg-color-hover: var(--fs-color-accent-1);
-    --fs-button-primary-text-color: var(--fs-color-text-inverse);
-  }
-}
-
-[data-fs-price] {
-  --fs-price-listing-color: #cb4242;
-  --fs-price-listing-text-decoration: line-through;
-}
-
-[data-fs-hero] {
-  --fs-hero-text-size: var(--fs-text-size-title-huge);
-  --fs-hero-heading-weight: var(--fs-text-weight-bold);
-}
-
-[data-fs-product-card] {
-  --fs-product-card-border-color: var(--fs-border-color-light);
-  --fs-product-card-border-radius: var(--fs-border-radius);
-  --fs-product-card-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  --fs-product-card-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.12);
-}
-
-[data-fs-navbar] {
-  --fs-navbar-bkg-color: var(--fs-color-main-0);
-  --fs-navbar-text-color: var(--fs-color-text-inverse);
-}
-
-[data-fs-search-input-field] {
-  --fs-search-input-field-height-desktop: var(--fs-spacing-6);
-}
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Using `!important` to Override Styles
-
-**What happens**: Developer uses `!important` declarations throughout their theme to force style changes on FastStore components, often because they are fighting specificity issues from placing styles in the wrong location.
-
-**Why it fails**: `!important` creates a specificity dead-end. Once used, every subsequent override also needs `!important`, creating an escalating specificity war. It makes the theme unmaintainable, hard to debug, and fragile during FastStore updates. It also defeats the cascading nature of design tokens — a token overridden with `!important` cannot be re-overridden by local tokens.
-
-**Fix**: Use the correct design token in the correct location. Place global overrides in `:root` and component overrides under `[data-fs-*]` selectors. If a token override isn't working, check that the selector specificity is sufficient and that the file is in `src/themes/`.
-
-```typescript
-// src/themes/custom-theme.scss
-// Use proper token targeting — no !important needed
-[data-fs-buy-button] {
-  --fs-button-primary-bkg-color: #e31c58;
-  --fs-button-primary-bkg-color-hover: #c4174d;
-}
-
-// If you need higher specificity for a specific page context:
-[data-fs-product-details] [data-fs-buy-button] {
-  --fs-button-primary-bkg-color: #1c58e3;
-}
-```
-
----
-
-### Anti-Pattern: Hardcoded Color and Size Values
-
-**What happens**: Developer uses hardcoded hex colors, pixel sizes, and font values directly in component styles instead of referencing design tokens.
-
-**Why it fails**: Hardcoded values cannot be updated globally. Changing the brand color requires finding and updating every hardcoded instance. It breaks the token hierarchy — other components that should share the same color won't. It also makes the store inconsistent when new sections or components are added, since they will use token defaults that don't match the hardcoded values.
-
-**Fix**: Always reference design tokens. If a token for your need doesn't exist, override a global token in `:root` and reference it. Use local tokens for component-specific exceptions.
-
-```typescript
-// src/themes/custom-theme.scss
-// Define brand colors as global tokens, then reference them
-:root {
-  --fs-color-accent-0: #e31c58;
-  --fs-color-accent-1: #c4174d;
-}
-
-// Reference the tokens — never hardcode
-[data-fs-buy-button] {
-  --fs-button-primary-bkg-color: var(--fs-color-accent-0);
-  --fs-button-primary-bkg-color-hover: var(--fs-color-accent-1);
-}
-
-[data-fs-badge] {
-  --fs-badge-bkg-color: var(--fs-color-accent-0);
-}
-```
-
----
-
-### Anti-Pattern: Creating a Parallel CSS System
-
-**What happens**: Developer ignores FastStore's token system entirely and creates their own CSS framework alongside FastStore's styles (e.g., importing Tailwind, Bootstrap, or a custom global stylesheet that redefines base element styles).
-
-**Why it fails**: A parallel CSS system conflicts with FastStore's structural styles and token architecture. Global resets or utility classes from Tailwind/Bootstrap can override FastStore's carefully tuned component styles. It doubles the CSS payload. Maintenance becomes a nightmare since two styling systems must be kept in sync. New team members must understand both systems.
-
-**Fix**: Work within FastStore's token system for all FastStore components. If you need utility classes for custom (non-FastStore) components, scope them carefully using CSS modules to avoid affecting native components.
-
-```typescript
+```scss
 // src/components/CustomBanner.module.scss
-// Scoped styles for custom components — won't affect FastStore components
 .customBanner {
   display: flex;
   align-items: center;
@@ -2261,17 +1331,27 @@ Full custom theme file for a branded store:
   color: var(--fs-color-text-inverse);
   border-radius: var(--fs-border-radius);
 }
-
-.customBannerTitle {
-  font-family: var(--fs-text-face-title);
-  font-size: var(--fs-text-size-title-subsection);
-  font-weight: var(--fs-text-weight-bold);
-}
 ```
 
-## Reference
+## Common failure modes
 
-**Links to VTEX documentation and related resources.**
+- Using `!important` declarations — creates specificity dead-ends and defeats the cascading nature of design tokens. Use the correct token at the correct selector specificity instead.
+- Hardcoding hex colors, pixel sizes, and font values directly in component styles instead of referencing `var(--fs-*)` tokens. Changes cannot propagate store-wide.
+- Creating a parallel CSS system (Tailwind, Bootstrap, custom global stylesheet) that conflicts with FastStore's structural styles and doubles the CSS payload.
+- Placing theme files outside `src/themes/` — they will not be discovered by the build system.
+- Targeting FastStore components with `.fs-*` class names or generic tag selectors instead of `[data-fs-*]` data attributes.
+
+## Review checklist
+
+- [ ] Is the theme file located in `src/themes/custom-theme.scss`?
+- [ ] Are global token overrides placed in `:root` scope?
+- [ ] Are component-level overrides using `[data-fs-*]` data attribute selectors?
+- [ ] Are all values referencing design tokens via `var(--fs-*)` instead of hardcoded values?
+- [ ] Is there no use of `!important` declarations?
+- [ ] Could this change be achieved without overrides (is theming sufficient)?
+- [ ] Are custom component styles scoped with CSS modules to avoid conflicts?
+
+## Reference
 
 - [Theming overview](https://developers.vtex.com/docs/guides/faststore/using-themes-overview) — Introduction to theming concepts, Brandless architecture, and token hierarchy
 - [Global tokens](https://developers.vtex.com/docs/guides/faststore/global-tokens-overview) — Complete reference for all global design tokens (colors, typography, spacing, borders)
@@ -2281,7 +1361,7 @@ Full custom theme file for a branded store:
 - [Styling a component](https://developers.vtex.com/docs/guides/faststore/using-themes-components) — Guide for customizing individual component styles with local tokens
 - [Available themes](https://developers.vtex.com/docs/guides/faststore/themes-overview) — Pre-built themes (Midnight, Soft Blue) available as starting points
 - [Importing FastStore UI component styles](https://developers.vtex.com/docs/guides/faststore/using-themes-importing-ui-components-styles) — How to import and use component styles in custom sections
-- [FastStore Section & Component Overrides](../faststore-overrides/skill.md) — Related skill for when theming alone is insufficient and behavioral changes are needed
+- [`faststore-overrides`](../faststore-overrides/skill.md) — Related skill for when theming alone is insufficient and behavioral changes are needed
 
 ---
 
@@ -2289,85 +1369,45 @@ Full custom theme file for a branded store:
 
 # BFF Layer Design & Security
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The Backend-for-Frontend (BFF) architecture pattern for headless VTEX storefronts, including secure API proxying, credential management, and the critical separation between public and private VTEX APIs.
+Use this skill when building or modifying any headless VTEX storefront that communicates with VTEX APIs — whether a custom storefront, mobile app, or kiosk.
 
-**When to use it**: When building any headless frontend that communicates with VTEX APIs — whether a custom storefront, mobile app, or kiosk. Every headless project needs a BFF layer to protect API credentials and manage authentication tokens server-side.
+- Setting up a BFF (Backend-for-Frontend) layer for a new headless project
+- Deciding which VTEX APIs need server-side proxying vs direct frontend calls
+- Implementing credential management (`VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `VtexIdclientAutCookie`)
+- Reviewing a headless architecture for security compliance
 
-**What you'll learn**:
-- Why a BFF layer is mandatory for headless VTEX (not optional)
-- How to classify VTEX APIs as public vs private and route them accordingly
-- How to manage `VtexIdclientAutCookie` server-side and proxy authenticated requests
-- How to protect `VTEX_APP_KEY` and `VTEX_APP_TOKEN` from client-side exposure
+Do not use this skill for:
+- Checkout-specific proxy logic and OrderForm management (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
+- Search API integration details (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
+- Caching and TTL strategy (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- A BFF layer is **mandatory** for every headless VTEX project. There is no scenario where a headless storefront can safely operate without one.
+- Route all VTEX API calls through the BFF **except** Intelligent Search, which is the only API safe to call directly from the frontend.
+- Use `VtexIdclientAutCookie` (stored server-side) for shopper-scoped API calls. Use `X-VTEX-API-AppKey`/`X-VTEX-API-AppToken` for machine-to-machine calls.
+- Classify APIs by their path: `/pub/` endpoints are public but most still need BFF proxying for session management; `/pvt/` endpoints are private and **must** go through BFF.
+- Even public Checkout endpoints (`/api/checkout/pub/`) must be proxied through BFF for security — they handle sensitive personal data.
+- Create separate API keys with minimal permissions for different BFF modules rather than sharing one key with broad access.
 
-### Concept 1: Public vs Private VTEX APIs
+## Hard constraints
 
-VTEX APIs fall into two categories based on their authentication requirements:
+### Constraint: A BFF layer is mandatory for headless VTEX — no exceptions
 
-- **Public APIs** (`/pub/` in the path): Can be called without API keys. Examples include Intelligent Search (`/api/io/_v/api/intelligent-search/`), Catalog public endpoints (`/api/catalog_system/pub/`), and Checkout public endpoints (`/api/checkout/pub/`). However, even public Checkout endpoints should still be proxied through BFF for security.
-- **Private APIs** (`/pvt/` in the path): Require `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers. Examples include OMS (`/api/oms/pvt/`), Profile System (`/api/profile-system/pvt/`), and Pricing (`/api/pricing/pvt/`). These must NEVER be called from client-side code.
+Every headless VTEX storefront MUST have a server-side BFF layer. Client-side code MUST NOT make direct HTTP requests to private VTEX API endpoints. All private API calls must be routed through the BFF.
 
-The only API safe to call directly from the frontend is Intelligent Search, because it is fully public and designed for client-side use.
+**Why this matters**
 
-### Concept 2: VtexIdclientAutCookie
+Private VTEX APIs require `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers. If the frontend calls these APIs directly, the credentials must be embedded in client-side code or transmitted to the browser, exposing them to any user who opens browser DevTools. Stolen API keys can be used to access order data, modify pricing, or perform destructive administrative actions.
 
-When a shopper logs in to a VTEX store, the platform issues a JWT token set as a cookie named `VtexIdclientAutCookie`. This token:
+**Detection**
 
-- Is valid for 24 hours after creation
-- Authenticates requests on behalf of the shopper
-- Has scoped permissions (shoppers can only perform shopping-related actions)
-- Must be stored and managed server-side in headless implementations
-- Can be refreshed using the VTEX ID refresh token flow
+If you see `fetch` or `axios` calls to `vtexcommercestable.com.br/api/checkout`, `/api/oms`, `/api/profile`, or any `/pvt/` endpoint in client-side code (files under `src/`, `public/`, `app/`, or any browser-executed bundle) → STOP immediately. These calls must be moved to the BFF.
 
-In headless stores, the BFF layer intercepts the login callback, extracts the `VtexIdclientAutCookie`, stores it in a secure server-side session, and uses it to authenticate subsequent API calls on behalf of the shopper.
+**Correct**
 
-### Concept 3: Machine Authentication (API Keys)
-
-For server-to-server communication where no shopper context is needed, VTEX uses application keys:
-
-- `X-VTEX-API-AppKey`: The public identifier for the credential pair
-- `X-VTEX-API-AppToken`: The secret token associated with the key
-
-These credentials are configured in License Manager with specific roles and permissions. They must only exist in server-side environment variables and never be transmitted to or accessible from client-side code.
-
-**Architecture/Data Flow**:
-
-```text
-Frontend (Browser/App)
-    │
-    ├── Direct call (OK): Intelligent Search API (public, read-only)
-    │
-    └── All other requests → BFF Layer (Node.js/Express)
-                                │
-                                ├── Injects VtexIdclientAutCookie from session
-                                ├── Injects X-VTEX-API-AppKey / X-VTEX-API-AppToken
-                                ├── Validates & sanitizes input
-                                └── Proxies to VTEX APIs
-                                        │
-                                        ├── Checkout API (/api/checkout/pub/...)
-                                        ├── OMS API (/api/oms/pvt/...)
-                                        ├── Profile API (/api/profile-system/pvt/...)
-                                        └── Other VTEX services
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: Frontend MUST NOT Call Private VTEX APIs
-
-**Rule**: Client-side code (browser JavaScript, mobile app networking layer) MUST NOT make direct HTTP requests to private VTEX API endpoints. All private API calls must be routed through the BFF.
-
-**Why**: Private VTEX APIs require `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers. If the frontend calls these APIs directly, the credentials must be embedded in client-side code or transmitted to the browser, exposing them to any user who opens browser DevTools. Stolen API keys can be used to access order data, modify pricing, or perform destructive administrative actions.
-
-**Detection**: If you see `fetch` or `axios` calls to `vtexcommercestable.com.br/api/checkout`, `/api/oms`, `/api/profile`, or any `/pvt/` endpoint in client-side code (files under `src/`, `public/`, `app/`, or any browser-executed bundle) → STOP immediately. These calls must be moved to the BFF.
-
-✅ **CORRECT**:
 ```typescript
 // Frontend code — calls BFF, not VTEX directly
 async function getOrderDetails(orderId: string): Promise<Order> {
@@ -2383,7 +1423,8 @@ async function getOrderDetails(orderId: string): Promise<Order> {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend code — calls VTEX OMS API directly (SECURITY VULNERABILITY)
 async function getOrderDetails(orderId: string): Promise<Order> {
@@ -2402,15 +1443,20 @@ async function getOrderDetails(orderId: string): Promise<Order> {
 
 ---
 
-### Constraint: VtexIdclientAutCookie MUST Be Managed Server-Side
+### Constraint: VtexIdclientAutCookie MUST be managed server-side
 
-**Rule**: The `VtexIdclientAutCookie` token MUST be stored in a secure server-side session (e.g., encrypted cookie, Redis session store) and MUST NOT be stored in `localStorage`, `sessionStorage`, or any client-accessible JavaScript variable.
+The `VtexIdclientAutCookie` token MUST be stored in a secure server-side session (e.g., encrypted cookie, Redis session store) and MUST NOT be stored in `localStorage`, `sessionStorage`, or any client-accessible JavaScript variable.
 
-**Why**: The `VtexIdclientAutCookie` is a bearer token that authenticates all actions on behalf of a shopper — placing orders, viewing profile data, accessing payment information. If stored client-side, it can be stolen via XSS attacks, browser extensions, or shared/public computers. An attacker with this token can impersonate the shopper.
+**Why this matters**
 
-**Detection**: If you see `VtexIdclientAutCookie` referenced in `localStorage.setItem`, `sessionStorage.setItem`, or assigned to a JavaScript variable in client-side code → STOP immediately. The token must be managed exclusively server-side.
+The `VtexIdclientAutCookie` is a bearer token that authenticates all actions on behalf of a shopper — placing orders, viewing profile data, accessing payment information. If stored client-side, it can be stolen via XSS attacks, browser extensions, or shared/public computers. An attacker with this token can impersonate the shopper.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `VtexIdclientAutCookie` referenced in `localStorage.setItem`, `sessionStorage.setItem`, or assigned to a JavaScript variable in client-side code → STOP immediately. The token must be managed exclusively server-side.
+
+**Correct**
+
 ```typescript
 // BFF route — stores VtexIdclientAutCookie in server-side session
 import { Router, Request, Response } from "express";
@@ -2458,7 +1504,8 @@ router.get("/api/bff/profile", async (req: Request, res: Response) => {
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend code — stores auth token in localStorage (SECURITY VULNERABILITY)
 function handleLoginCallback() {
@@ -2480,15 +1527,20 @@ async function getProfile() {
 
 ---
 
-### Constraint: API Keys MUST NOT Appear in Client-Side Code
+### Constraint: API keys MUST NOT appear in client-side code
 
-**Rule**: `VTEX_APP_KEY` and `VTEX_APP_TOKEN` values MUST only exist in server-side environment variables and MUST NOT be present in any file that is bundled, served, or accessible to the browser.
+`VTEX_APP_KEY` and `VTEX_APP_TOKEN` values MUST only exist in server-side environment variables and MUST NOT be present in any file that is bundled, served, or accessible to the browser.
 
-**Why**: API keys grant programmatic access to the VTEX platform with the permissions of their associated role. Exposing them in frontend bundles, public directories, or client-side environment variables (e.g., `NEXT_PUBLIC_*`, `VITE_*`) allows anyone to extract them and make unauthorized API calls.
+**Why this matters**
 
-**Detection**: If you see `VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `X-VTEX-API-AppKey`, or `X-VTEX-API-AppToken` in files under `src/`, `public/`, `app/` directories, or in environment variables prefixed with `NEXT_PUBLIC_`, `VITE_`, or `REACT_APP_` → STOP immediately. Move these to server-side-only environment variables.
+API keys grant programmatic access to the VTEX platform with the permissions of their associated role. Exposing them in frontend bundles, public directories, or client-side environment variables (e.g., `NEXT_PUBLIC_*`, `VITE_*`) allows anyone to extract them and make unauthorized API calls.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `X-VTEX-API-AppKey`, or `X-VTEX-API-AppToken` in files under `src/`, `public/`, `app/` directories, or in environment variables prefixed with `NEXT_PUBLIC_`, `VITE_`, or `REACT_APP_` → STOP immediately. Move these to server-side-only environment variables.
+
+**Correct**
+
 ```typescript
 // BFF server code — reads keys from server-side env vars only
 // File: server/vtex-client.ts (never bundled for browser)
@@ -2525,7 +1577,8 @@ router.get("/api/bff/orders/:orderId", async (req: Request, res: Response) => {
 export default router;
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // .env file with NEXT_PUBLIC_ prefix — exposed to browser bundle!
 // NEXT_PUBLIC_VTEX_APP_KEY=vtexappkey-mystore-ABCDEF
@@ -2546,13 +1599,29 @@ async function fetchOrders() {
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Architecture overview — how requests flow through the BFF:
 
-### Step 1: Set Up the BFF Server
+```text
+Frontend (Browser/App)
+    │
+    ├── Direct call (OK): Intelligent Search API (public, read-only)
+    │
+    └── All other requests → BFF Layer (Node.js/Express)
+                                │
+                                ├── Injects VtexIdclientAutCookie from session
+                                ├── Injects X-VTEX-API-AppKey / X-VTEX-API-AppToken
+                                ├── Validates & sanitizes input
+                                └── Proxies to VTEX APIs
+                                        │
+                                        ├── Checkout API (/api/checkout/pub/...)
+                                        ├── OMS API (/api/oms/pvt/...)
+                                        ├── Profile API (/api/profile-system/pvt/...)
+                                        └── Other VTEX services
+```
 
-Create an Express server that will serve as the BFF layer between your frontend and VTEX APIs. All VTEX credentials live exclusively in this server's environment.
+Minimal BFF server setup with session management:
 
 ```typescript
 // server/index.ts
@@ -2599,9 +1668,7 @@ app.listen(PORT, () => {
 });
 ```
 
-### Step 2: Create a VTEX API Client with Credential Injection
-
-Build a shared utility that injects the correct authentication headers for each request type — either API keys for machine-to-machine calls or `VtexIdclientAutCookie` for shopper-scoped calls.
+VTEX API client with credential injection for both auth types:
 
 ```typescript
 // server/vtex-api-client.ts
@@ -2651,9 +1718,7 @@ export async function vtexRequest<T>(options: VtexRequestOptions): Promise<T> {
 }
 ```
 
-### Step 3: Implement BFF Route Handlers
-
-Create route handlers that validate incoming requests, extract session data, and proxy to VTEX APIs with proper authentication.
+BFF route handler with session-based auth and input validation:
 
 ```typescript
 // server/routes/orders.ts
@@ -2691,9 +1756,7 @@ ordersRoutes.get("/:orderId", async (req: Request, res: Response) => {
 });
 ```
 
-### Complete Example
-
-A full BFF setup with authentication flow, session management, and API proxying:
+Authentication flow with server-side token management:
 
 ```typescript
 // server/routes/auth.ts
@@ -2748,101 +1811,86 @@ authRoutes.get("/status", (req: Request, res: Response) => {
 });
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Proxying Intelligent Search through BFF**: Routing every VTEX API call through the BFF, including Intelligent Search, adds unnecessary latency and server load. Intelligent Search is a public, read-only API designed for direct frontend consumption. Call it directly from the frontend.
 
-### Anti-Pattern: Proxying All APIs Including Intelligent Search
+  ```typescript
+  // Frontend code — call Intelligent Search directly (this is correct!)
+  async function searchProducts(query: string, from: number = 0, to: number = 19): Promise<SearchResult> {
+    const baseUrl = `https://${STORE_ACCOUNT}.vtexcommercestable.com.br`;
+    const response = await fetch(
+      `${baseUrl}/api/io/_v/api/intelligent-search/product_search/?query=${encodeURIComponent(query)}&from=${from}&to=${to}&locale=en-US`,
+    );
+    return response.json();
+  }
+  ```
 
-**What happens**: Developers route every VTEX API call through the BFF, including Intelligent Search, adding unnecessary latency and server load to search queries.
+- **Sharing a single API key across all BFF operations**: Using one API key with broad permissions (e.g., Owner role) for all BFF operations means a compromised key grants access to every VTEX resource. Create separate API keys for different BFF modules with minimal required permissions.
 
-**Why it fails**: Intelligent Search is a public, read-only API designed for direct frontend consumption. Proxying it through the BFF adds a network hop, increases latency on every search interaction, and puts unnecessary load on the BFF server. Search queries are high-frequency operations that benefit from direct CDN-cached responses.
+  ```typescript
+  // server/vtex-credentials.ts — separate keys per domain
+  export const credentials = {
+    oms: {
+      appKey: process.env.VTEX_OMS_APP_KEY!,
+      appToken: process.env.VTEX_OMS_APP_TOKEN!,
+    },
+    checkout: {
+      appKey: process.env.VTEX_CHECKOUT_APP_KEY!,
+      appToken: process.env.VTEX_CHECKOUT_APP_TOKEN!,
+    },
+    catalog: {
+      appKey: process.env.VTEX_CATALOG_APP_KEY!,
+      appToken: process.env.VTEX_CATALOG_APP_TOKEN!,
+    },
+  } as const;
+  ```
 
-**Fix**: Call Intelligent Search directly from the frontend. Only proxy APIs that require authentication or handle sensitive data.
+- **Logging API credentials or auth tokens**: Logging request headers or full request objects during debugging inadvertently writes API keys or `VtexIdclientAutCookie` values to log files, which may be accessible to multiple team members or attackers. Sanitize all log output to strip sensitive headers before logging.
 
-```typescript
-// Frontend code — call Intelligent Search directly (this is correct!)
-async function searchProducts(query: string, from: number = 0, to: number = 19): Promise<SearchResult> {
-  const baseUrl = `https://${STORE_ACCOUNT}.vtexcommercestable.com.br`;
-  const response = await fetch(
-    `${baseUrl}/api/io/_v/api/intelligent-search/product_search/?query=${encodeURIComponent(query)}&from=${from}&to=${to}&locale=en-US`,
-  );
-  return response.json();
-}
-```
+  ```typescript
+  // server/middleware/request-logger.ts
+  import { Request, Response, NextFunction } from "express";
 
----
+  const SENSITIVE_HEADERS = [
+    "x-vtex-api-appkey",
+    "x-vtex-api-apptoken",
+    "cookie",
+    "authorization",
+  ];
 
-### Anti-Pattern: Sharing a Single API Key Across All BFF Operations
+  export function requestLogger(req: Request, _res: Response, next: NextFunction) {
+    const sanitizedHeaders = Object.fromEntries(
+      Object.entries(req.headers).map(([key, value]) =>
+        SENSITIVE_HEADERS.includes(key.toLowerCase())
+          ? [key, "[REDACTED]"]
+          : [key, value]
+      )
+    );
 
-**What happens**: Developers use one API key with broad permissions (e.g., Owner role) for all BFF operations instead of creating scoped keys for different operations.
+    console.log({
+      method: req.method,
+      path: req.path,
+      headers: sanitizedHeaders,
+      timestamp: new Date().toISOString(),
+    });
 
-**Why it fails**: If the API key is compromised (e.g., via a server vulnerability or log leak), the attacker gains access to every VTEX resource. The principle of least privilege requires that each key only has the permissions it needs.
+    next();
+  }
+  ```
 
-**Fix**: Create separate API keys for different BFF modules with minimal required permissions. Use one key for OMS read access, another for checkout operations, etc.
+## Review checklist
 
-```typescript
-// server/vtex-credentials.ts — separate keys per domain
-export const credentials = {
-  oms: {
-    appKey: process.env.VTEX_OMS_APP_KEY!,
-    appToken: process.env.VTEX_OMS_APP_TOKEN!,
-  },
-  checkout: {
-    appKey: process.env.VTEX_CHECKOUT_APP_KEY!,
-    appToken: process.env.VTEX_CHECKOUT_APP_TOKEN!,
-  },
-  catalog: {
-    appKey: process.env.VTEX_CATALOG_APP_KEY!,
-    appToken: process.env.VTEX_CATALOG_APP_TOKEN!,
-  },
-} as const;
-```
-
----
-
-### Anti-Pattern: Logging API Credentials or Auth Tokens
-
-**What happens**: Developers log request headers or full request objects during debugging, inadvertently writing API keys or `VtexIdclientAutCookie` values to log files.
-
-**Why it fails**: Log files are often stored in centralized logging systems (e.g., CloudWatch, Datadog) accessible to multiple team members. Credentials in logs can be harvested by anyone with log access or by attackers who compromise the logging infrastructure.
-
-**Fix**: Sanitize all log output to strip sensitive headers before logging. Never log full request/response objects.
-
-```typescript
-// server/middleware/request-logger.ts
-import { Request, Response, NextFunction } from "express";
-
-const SENSITIVE_HEADERS = [
-  "x-vtex-api-appkey",
-  "x-vtex-api-apptoken",
-  "cookie",
-  "authorization",
-];
-
-export function requestLogger(req: Request, _res: Response, next: NextFunction) {
-  const sanitizedHeaders = Object.fromEntries(
-    Object.entries(req.headers).map(([key, value]) =>
-      SENSITIVE_HEADERS.includes(key.toLowerCase())
-        ? [key, "[REDACTED]"]
-        : [key, value]
-    )
-  );
-
-  console.log({
-    method: req.method,
-    path: req.path,
-    headers: sanitizedHeaders,
-    timestamp: new Date().toISOString(),
-  });
-
-  next();
-}
-```
+- [ ] Is a BFF layer present? Every headless VTEX project requires one — no exceptions.
+- [ ] Are all private VTEX API calls (`/pvt/` endpoints) routed through the BFF?
+- [ ] Are `VTEX_APP_KEY` and `VTEX_APP_TOKEN` stored exclusively in server-side environment variables?
+- [ ] Are API keys absent from any `NEXT_PUBLIC_*`, `VITE_*`, or `REACT_APP_*` environment variables?
+- [ ] Is `VtexIdclientAutCookie` stored in a server-side session, not in `localStorage` or `sessionStorage`?
+- [ ] Is Intelligent Search called directly from the frontend (not unnecessarily proxied through BFF)?
+- [ ] Are separate API keys used for different BFF modules with minimal permissions?
+- [ ] Are sensitive headers redacted from all log output?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Headless commerce overview](https://developers.vtex.com/docs/guides/headless-commerce) — Core architecture guide for building headless stores on VTEX
 - [Headless authentication](https://developers.vtex.com/docs/guides/headless-authentication) — OAuth-based shopper authentication flow for headless implementations
@@ -2855,105 +1903,66 @@ export function requestLogger(req: Request, _res: Response, next: NextFunction) 
 
 # Caching & Performance for Headless VTEX
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Caching strategies for headless VTEX storefronts, including which APIs can be aggressively cached, which must never be cached, CDN configuration, BFF-level caching with `stale-while-revalidate` patterns, and cache invalidation strategies.
+Use this skill when building or optimizing a headless VTEX storefront for performance. Proper caching is the single most impactful performance optimization for headless commerce.
 
-**When to use it**: When building or optimizing a headless VTEX storefront for performance. Proper caching is the single most impactful performance optimization for headless commerce — it reduces latency, server load, and API rate limit consumption while improving shopper experience.
+- Configuring CDN or edge caching for Intelligent Search and Catalog APIs
+- Adding BFF-level caching (in-memory or Redis) for frequently requested data
+- Deciding which VTEX API responses can be cached and which must never be cached
+- Implementing cache invalidation when catalog data changes
 
-**What you'll learn**:
-- How to classify VTEX APIs into cacheable (public/read-only) vs non-cacheable (transactional/personal)
-- How to implement CDN caching for Intelligent Search and Catalog APIs
-- How to add BFF-level caching with `stale-while-revalidate` for optimal freshness/performance balance
-- How to implement cache invalidation when catalog data changes
+Do not use this skill for:
+- BFF architecture and API routing decisions (use [`headless-bff-architecture`](../headless-bff-architecture/skill.md))
+- Intelligent Search API integration specifics (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
+- Checkout proxy and OrderForm management (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Classify every VTEX API as cacheable or non-cacheable before implementing caching logic.
+- **Cacheable** (public, read-only, non-personalized): Intelligent Search, Catalog public endpoints, top searches, autocomplete.
+- **Non-cacheable** (transactional, personalized, sensitive): Checkout, Profile, OMS, Payments, Pricing private endpoints. These must NEVER be cached at any layer.
+- Use `stale-while-revalidate` for the best freshness/performance balance — serve cached data instantly while refreshing in the background.
+- Use moderate TTLs (2-15 minutes) combined with event-driven invalidation. Never set TTLs of hours/days without an invalidation mechanism.
+- Cache by request URL/params only, not by user identity — catalog data is the same for all anonymous users in the same trade policy.
+- Layer caching: CDN edge cache for direct frontend calls (Search), BFF cache (Redis/in-memory) for proxied catalog data.
 
-### Concept 1: API Cacheability Classification
+Recommended TTLs:
 
-VTEX APIs fall into two categories based on whether their responses can be cached:
-
-**Cacheable APIs** (public, read-only, non-personalized):
-| API | Example Endpoints | Recommended TTL |
+| API | Recommended TTL | SWR |
 |---|---|---|
-| Intelligent Search | `/api/io/_v/api/intelligent-search/product_search/` | 2-5 minutes |
-| Catalog (public) | `/api/catalog_system/pub/category/tree/`, `/api/catalog_system/pub/products/search/` | 5-15 minutes |
-| Intelligent Search autocomplete | `/api/io/_v/api/intelligent-search/autocomplete_suggestions` | 1-2 minutes |
-| Intelligent Search top searches | `/api/io/_v/api/intelligent-search/top_searches` | 5-10 minutes |
+| Intelligent Search (product_search) | 2-5 minutes | 60s |
+| Catalog (category tree) | 5-15 minutes | 5 min |
+| Intelligent Search (autocomplete) | 1-2 minutes | 30s |
+| Intelligent Search (top searches) | 5-10 minutes | 2 min |
+| Catalog (product details) | 5 minutes | 60s |
 
-**Non-cacheable APIs** (transactional, personalized, or sensitive):
-| API | Example Endpoints | Why Not Cacheable |
-|---|---|---|
-| Checkout | `/api/checkout/pub/orderForm` | Cart data is per-user, changes with every action |
-| Profile | `/api/profile-system/pvt/` | Personal data, GDPR/LGPD sensitive |
-| OMS (Orders) | `/api/oms/pvt/orders` | Order status changes, user-specific |
-| Payments | `/api/payments/` | Financial transactions, must always be real-time |
-| Pricing (private) | `/api/pricing/pvt/` | May have per-user pricing rules |
+APIs that must NEVER be cached:
 
-### Concept 2: Cache Layers
+| API | Why |
+|---|---|
+| Checkout (`/api/checkout/`) | Cart data is per-user, changes with every action |
+| Profile (`/api/profile-system/pvt/`) | Personal data, GDPR/LGPD sensitive |
+| OMS (`/api/oms/pvt/orders`) | Order status changes, user-specific |
+| Payments (`/api/payments/`) | Financial transactions, must always be real-time |
+| Pricing private (`/api/pricing/pvt/`) | May have per-user pricing rules |
 
-In a headless VTEX architecture, caching can happen at multiple layers:
+## Hard constraints
 
-1. **CDN Edge Cache**: Caches responses closest to the user. Best for Intelligent Search (called directly from frontend). Use `Cache-Control` headers.
-2. **BFF In-Memory Cache**: Caches VTEX API responses within the BFF process. Fast but limited by server memory. Good for category trees and top searches.
-3. **BFF Distributed Cache (Redis/Memcached)**: Shared cache across multiple BFF instances. Best for catalog data that multiple users request.
-4. **Browser Cache**: Client-side caching via `Cache-Control` headers. Good for static catalog data, but be careful with personalized data.
+### Constraint: MUST cache public API data aggressively
 
-### Concept 3: Stale-While-Revalidate (SWR)
+Search results, catalog data, category trees, and other public read-only data MUST be cached at appropriate levels (CDN, BFF, or both). Without caching, every user request hits VTEX APIs directly.
 
-The `stale-while-revalidate` pattern serves cached (potentially stale) data immediately while asynchronously fetching fresh data in the background. This provides:
+**Why this matters**
 
-- **Instant responses**: Users see data immediately, even if slightly stale
-- **Eventual freshness**: Cache is updated in the background for the next request
-- **Resilience**: If the origin is down, stale data is still served
+Without caching, a headless storefront generates an API request for every single page view, search, and category browse. This quickly exceeds VTEX API rate limits (causing 429 errors and degraded service), adds 200-500ms of latency per request, and creates a poor shopper experience. A store with 10,000 concurrent users making uncached search requests will overwhelm any API.
 
-The HTTP header pattern: `Cache-Control: public, max-age=120, stale-while-revalidate=60`
-- Serves cached data for 120 seconds without checking origin
-- Between 120-180 seconds, serves stale data while fetching fresh data
-- After 180 seconds, waits for fresh data before responding
+**Detection**
 
-### Concept 4: Cache Invalidation
+If a headless storefront calls Intelligent Search or Catalog APIs without any caching layer (no CDN cache headers, no BFF cache, no `Cache-Control` headers) → STOP immediately. Caching must be implemented for all public, read-only API responses.
 
-Catalog data changes (product updates, price changes, new products) must eventually reflect on the storefront. Strategies:
+**Correct**
 
-- **Time-based (TTL)**: Set appropriate expiration times. Shorter TTL = fresher data but more origin load.
-- **Event-driven**: Use VTEX webhooks/hooks to invalidate specific cache entries when data changes.
-- **Manual purge**: Provide admin endpoints to force-clear cache for specific products or categories.
-
-**Architecture/Data Flow**:
-
-```text
-Frontend (Browser)
-    │
-    ├── Direct to CDN (Intelligent Search)
-    │   └── CDN Edge Cache (TTL: 2-5 min, SWR: 60s)
-    │       └── VTEX Intelligent Search API
-    │
-    └── BFF Endpoints
-        │
-        ├── Cacheable routes (catalog, category tree)
-        │   └── BFF Cache Layer (Redis/in-memory)
-        │       └── VTEX Catalog API
-        │
-        └── Non-cacheable routes (checkout, profile, orders)
-            └── Direct proxy to VTEX (NO CACHING)
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: MUST Cache Public Data Aggressively
-
-**Rule**: Search results, catalog data, category trees, and other public read-only data MUST be cached at appropriate levels (CDN, BFF, or both). Without caching, every user request hits VTEX APIs directly.
-
-**Why**: Without caching, a headless storefront generates an API request for every single page view, search, and category browse. This quickly exceeds VTEX API rate limits (causing 429 errors and degraded service), adds 200-500ms of latency per request, and creates a poor shopper experience. A store with 10,000 concurrent users making uncached search requests will overwhelm any API.
-
-**Detection**: If a headless storefront calls Intelligent Search or Catalog APIs without any caching layer (no CDN cache headers, no BFF cache, no `Cache-Control` headers) → STOP immediately. Caching must be implemented for all public, read-only API responses.
-
-✅ **CORRECT**:
 ```typescript
 // BFF route with in-memory cache for category tree
 import { Router, Request, Response } from "express";
@@ -3033,7 +2042,8 @@ router.get("/categories", async (_req: Request, res: Response) => {
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // No caching — every request hits VTEX directly
 router.get("/categories", async (_req: Request, res: Response) => {
@@ -3048,15 +2058,20 @@ router.get("/categories", async (_req: Request, res: Response) => {
 
 ---
 
-### Constraint: MUST NOT Cache Transactional or Personal Data
+### Constraint: MUST NOT cache transactional or personal data
 
-**Rule**: Responses from Checkout API, Profile API, OMS API, and Payments API MUST NOT be cached at any layer — not in the CDN, not in BFF memory, not in Redis, and not in browser cache.
+Responses from Checkout API, Profile API, OMS API, and Payments API MUST NOT be cached at any layer — not in the CDN, not in BFF memory, not in Redis, and not in browser cache.
 
-**Why**: Caching transactional data can cause catastrophic failures. A cached OrderForm means a shopper sees stale cart contents (wrong items, wrong prices). Cached profile data can leak one user's personal information to another user (especially behind shared caches). Cached order data shows stale statuses. Any of these is a security vulnerability, data privacy violation (GDPR/LGPD), or business logic failure.
+**Why this matters**
 
-**Detection**: If you see caching logic (Redis `set`, in-memory cache, `Cache-Control` headers with `max-age > 0`) applied to checkout, order, profile, or payment API responses → STOP immediately. These endpoints must always return fresh data.
+Caching transactional data can cause catastrophic failures. A cached OrderForm means a shopper sees stale cart contents (wrong items, wrong prices). Cached profile data can leak one user's personal information to another user (especially behind shared caches). Cached order data shows stale statuses. Any of these is a security vulnerability, data privacy violation (GDPR/LGPD), or business logic failure.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see caching logic (Redis `set`, in-memory cache, `Cache-Control` headers with `max-age > 0`) applied to checkout, order, profile, or payment API responses → STOP immediately. These endpoints must always return fresh data.
+
+**Correct**
+
 ```typescript
 // BFF checkout route — explicitly no caching
 import { Router, Request, Response } from "express";
@@ -3098,7 +2113,8 @@ checkoutRoutes.get("/cart", async (req: Request, res: Response) => {
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // CATASTROPHIC: Caching checkout data in Redis
 import Redis from "ioredis";
@@ -3127,15 +2143,20 @@ checkoutRoutes.get("/cart", async (req: Request, res: Response) => {
 
 ---
 
-### Constraint: MUST Implement Cache Invalidation Strategy
+### Constraint: MUST implement cache invalidation strategy
 
-**Rule**: Every caching implementation MUST have a clear invalidation strategy. Cached data must have appropriate TTLs and there must be a mechanism to force-invalidate cache when the underlying data changes.
+Every caching implementation MUST have a clear invalidation strategy. Cached data must have appropriate TTLs and there must be a mechanism to force-invalidate cache when the underlying data changes.
 
-**Why**: Without invalidation, cached data becomes permanently stale. Products that are out of stock continue to appear available. Price changes don't reflect until the arbitrary TTL expires. New products are invisible. This leads to a poor shopper experience, failed orders (due to stale availability), and incorrect pricing.
+**Why this matters**
 
-**Detection**: If a caching implementation has no TTL (`max-age`, expiration time) or has very long TTLs (hours/days) without any invalidation mechanism → STOP immediately. All caches need bounded TTLs and ideally event-driven invalidation.
+Without invalidation, cached data becomes permanently stale. Products that are out of stock continue to appear available. Price changes don't reflect until the arbitrary TTL expires. New products are invisible. This leads to a poor shopper experience, failed orders (due to stale availability), and incorrect pricing.
 
-✅ **CORRECT**:
+**Detection**
+
+If a caching implementation has no TTL (`max-age`, expiration time) or has very long TTLs (hours/days) without any invalidation mechanism → STOP immediately. All caches need bounded TTLs and ideally event-driven invalidation.
+
+**Correct**
+
 ```typescript
 // Cache with TTL + manual invalidation endpoint + event-driven invalidation
 import { Router, Request, Response } from "express";
@@ -3204,22 +2225,21 @@ router.post("/cache/invalidate", (req: Request, res: Response) => {
 
 // Webhook endpoint for VTEX catalog change events
 router.post("/webhooks/catalog-change", (req: Request, res: Response) => {
-  const { IdSku, productId } = req.body as { IdSku?: string; productId?: string };
+  const { productId } = req.body as { productId?: string };
 
   if (productId) {
     productCache.delete(productId);
     console.log(`Cache invalidated for product ${productId}`);
   }
 
-  // Also invalidate related search cache entries
-  // In production, use a more sophisticated invalidation strategy
   res.status(200).json({ received: true });
 });
 
 export default router;
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Cache with no TTL and no invalidation — data becomes permanently stale
 const cache = new Map<string, unknown>();
@@ -3239,16 +2259,30 @@ router.get("/products/:productId", async (req: Request, res: Response) => {
 });
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Cache layer architecture for a headless VTEX storefront:
 
-### Step 1: Set Up CDN Cache Headers for Intelligent Search
+```text
+Frontend (Browser)
+    │
+    ├── Direct to CDN (Intelligent Search)
+    │   └── CDN Edge Cache (TTL: 2-5 min, SWR: 60s)
+    │       └── VTEX Intelligent Search API
+    │
+    └── BFF Endpoints
+        │
+        ├── Cacheable routes (catalog, category tree)
+        │   └── BFF Cache Layer (Redis/in-memory)
+        │       └── VTEX Catalog API
+        │
+        └── Non-cacheable routes (checkout, profile, orders)
+            └── Direct proxy to VTEX (NO CACHING)
+```
 
-Since Intelligent Search is called directly from the frontend, use a CDN (e.g., Cloudflare, CloudFront, Fastly) to cache responses at the edge. Configure your CDN to respect `Cache-Control` headers or set custom caching rules for the search API path.
+CDN cache headers for Intelligent Search (edge function example):
 
 ```typescript
-// If you're using a CDN worker/edge function to add cache headers:
 // cloudflare-worker.ts or similar edge function
 async function handleSearchRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -3283,9 +2317,7 @@ async function handleSearchRequest(request: Request): Promise<Response> {
 }
 ```
 
-### Step 2: Implement BFF Cache Layer with Redis
-
-For catalog data proxied through the BFF, use Redis as a shared cache that persists across BFF restarts and is shared across multiple instances.
+Redis-based BFF cache with stale-while-revalidate:
 
 ```typescript
 // server/cache/redis-cache.ts
@@ -3339,123 +2371,12 @@ export async function invalidateCache(pattern: string): Promise<number> {
 }
 ```
 
-### Step 3: Apply Caching to BFF Routes Selectively
-
-Only cache public, read-only data. Never cache checkout, profile, or order data.
-
-```typescript
-// server/routes/catalog.ts
-import { Router, Request, Response } from "express";
-import { getCachedOrFetch, invalidateCache } from "../cache/redis-cache";
-
-const router = Router();
-
-const VTEX_ACCOUNT = process.env.VTEX_ACCOUNT!;
-const VTEX_BASE = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br`;
-
-// Category tree — long cache, changes rarely
-router.get("/categories", async (_req: Request, res: Response) => {
-  try {
-    const result = await getCachedOrFetch(
-      "catalog:categories",
-      async () => {
-        const response = await fetch(`${VTEX_BASE}/api/catalog_system/pub/category/tree/3`);
-        return response.json();
-      },
-      { ttlSeconds: 900, swrSeconds: 300 } // 15 min cache, 5 min SWR
-    );
-
-    res.set("X-Cache", result.cacheStatus);
-    res.json(result.data);
-  } catch (error) {
-    console.error("Error fetching categories:", error);
-    res.status(500).json({ error: "Failed to fetch categories" });
-  }
-});
-
-// Product details — moderate cache
-router.get("/products/:productId", async (req: Request, res: Response) => {
-  const { productId } = req.params;
-
-  if (!/^\d+$/.test(productId)) {
-    return res.status(400).json({ error: "Invalid product ID" });
-  }
-
-  try {
-    const result = await getCachedOrFetch(
-      `catalog:product:${productId}`,
-      async () => {
-        const response = await fetch(
-          `${VTEX_BASE}/api/catalog_system/pub/products/search?fq=productId:${productId}`
-        );
-        return response.json();
-      },
-      { ttlSeconds: 300, swrSeconds: 60 } // 5 min cache, 1 min SWR
-    );
-
-    res.set("X-Cache", result.cacheStatus);
-    res.json(result.data);
-  } catch (error) {
-    console.error("Error fetching product:", error);
-    res.status(500).json({ error: "Failed to fetch product" });
-  }
-});
-
-// Cart simulation — very short cache (same cart config may be checked by many users)
-router.post("/simulation", async (req: Request, res: Response) => {
-  const cacheKey = `catalog:simulation:${JSON.stringify(req.body)}`;
-
-  try {
-    const result = await getCachedOrFetch(
-      cacheKey,
-      async () => {
-        const response = await fetch(
-          `${VTEX_BASE}/api/checkout/pub/orderForms/simulation`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(req.body),
-          }
-        );
-        return response.json();
-      },
-      { ttlSeconds: 30, swrSeconds: 10 } // 30 sec cache, 10 sec SWR
-    );
-
-    res.set("X-Cache", result.cacheStatus);
-    res.json(result.data);
-  } catch (error) {
-    console.error("Error simulating cart:", error);
-    res.status(500).json({ error: "Failed to simulate cart" });
-  }
-});
-
-// Webhook for catalog changes — invalidates affected cache
-router.post("/webhooks/catalog", async (req: Request, res: Response) => {
-  const { productId } = req.body as { productId?: string };
-
-  if (productId) {
-    await invalidateCache(`catalog:product:${productId}`);
-  }
-
-  // Invalidate category tree on any catalog change
-  await invalidateCache("catalog:categories");
-
-  res.status(200).json({ received: true });
-});
-
-export default router;
-```
-
-### Complete Example
-
-Full caching setup with CDN headers, BFF cache, and no-cache enforcement for transactional routes:
+Applying cache strategy per route group:
 
 ```typescript
 // server/middleware/cache-headers.ts
 import { Request, Response, NextFunction } from "express";
 
-// Middleware to set appropriate cache headers based on route type
 export function cacheHeaders(type: "public" | "private" | "no-cache") {
   return (_req: Request, res: Response, next: NextFunction) => {
     switch (type) {
@@ -3502,110 +2423,66 @@ app.use("/api/bff/catalog", cacheHeaders("public"), catalogRoutes);
 app.use("/api/bff/checkout", cacheHeaders("no-cache"), checkoutRoutes);
 app.use("/api/bff/orders", cacheHeaders("no-cache"), orderRoutes);
 app.use("/api/bff/profile", cacheHeaders("no-cache"), profileRoutes);
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`BFF server running on port ${PORT}`);
-});
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Caching based on session or user identity**: Creating per-user caches for catalog data (e.g., keying product search results by user ID) multiplies storage by user count and eliminates the primary benefit of caching. Cache public API responses by request URL/params only. For trade-policy-specific pricing, include trade policy (not user ID) in the cache key.
 
-### Anti-Pattern: Caching Based on Session or User Identity
+  ```typescript
+  // Cache key based on request parameters only — not user identity
+  function buildCacheKey(path: string, params: Record<string, string>): string {
+    const sortedParams = Object.entries(params)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join("&");
+    return `search:${path}:${sortedParams}`;
+  }
+  ```
 
-**What happens**: Developers create per-user caches for catalog data (e.g., caching product search results keyed by user ID).
+- **Setting extremely long cache TTLs without invalidation**: TTLs of hours or days mean price changes, stock updates, and new products are invisible to shoppers. Use moderate TTLs (2-15 minutes) combined with event-driven invalidation and `stale-while-revalidate`.
 
-**Why it fails**: Catalog data is the same for all anonymous users in the same trade policy. Creating per-user cache entries multiplies storage requirements by the number of users and eliminates the primary benefit of caching (serving the same response to many users). A store with 50,000 users and 1,000 unique searches would create 50 million cache entries instead of 1,000.
+  ```typescript
+  // Moderate TTL with stale-while-revalidate
+  const CACHE_CONFIG = {
+    search: { ttlSeconds: 120, swrSeconds: 60 },      // 2 min + 1 min SWR
+    categories: { ttlSeconds: 900, swrSeconds: 300 },  // 15 min + 5 min SWR
+    product: { ttlSeconds: 300, swrSeconds: 60 },       // 5 min + 1 min SWR
+    topSearches: { ttlSeconds: 600, swrSeconds: 120 },  // 10 min + 2 min SWR
+  } as const;
+  ```
 
-**Fix**: Cache public API responses by request URL/params only, not by user. Only skip cache or add user context for personalized pricing scenarios tied to specific trade policies.
+- **No cache monitoring or observability**: Without measuring hit/miss/stale rates, you cannot tell if caching is effective or if TTLs are appropriate. Add `X-Cache` headers and track metrics in your observability platform.
 
-```typescript
-// Cache key based on request parameters only — not user identity
-function buildCacheKey(path: string, params: Record<string, string>): string {
-  const sortedParams = Object.entries(params)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join("&");
-  return `search:${path}:${sortedParams}`;
-}
+  ```typescript
+  // Add cache observability to every cached response
+  interface CacheMetrics {
+    hits: number;
+    misses: number;
+    stale: number;
+  }
 
-// For trade-policy-specific pricing, include trade policy (not user ID)
-function buildTradePolicyCacheKey(path: string, params: Record<string, string>, tradePolicy: string): string {
-  return `search:tp${tradePolicy}:${path}:${new URLSearchParams(params).toString()}`;
-}
-```
+  const metrics: CacheMetrics = { hits: 0, misses: 0, stale: 0 };
 
----
+  export function getCacheMetrics(): CacheMetrics & { hitRate: string } {
+    const total = metrics.hits + metrics.misses + metrics.stale;
+    const hitRate = total > 0 ? ((metrics.hits / total) * 100).toFixed(1) + "%" : "N/A";
+    return { ...metrics, hitRate };
+  }
+  ```
 
-### Anti-Pattern: Setting Extremely Long Cache TTLs Without Invalidation
+## Review checklist
 
-**What happens**: Developers set cache TTLs of hours or days to maximize cache hit rates, but provide no invalidation mechanism.
-
-**Why it fails**: Long TTLs mean that price changes, stock updates, and new product launches are invisible to shoppers for hours or days. A product that sells out continues to appear available. A flash sale price doesn't take effect until the cache expires. This leads to failed orders, customer frustration, and potential legal issues with displayed pricing.
-
-**Fix**: Use moderate TTLs (2-15 minutes for search, 5-15 minutes for catalog) combined with event-driven invalidation. The `stale-while-revalidate` pattern allows instant responses while still checking for fresh data regularly.
-
-```typescript
-// Moderate TTL with stale-while-revalidate — balances freshness and performance
-const CACHE_CONFIG = {
-  search: { ttlSeconds: 120, swrSeconds: 60 },      // 2 min + 1 min SWR
-  categories: { ttlSeconds: 900, swrSeconds: 300 },  // 15 min + 5 min SWR
-  product: { ttlSeconds: 300, swrSeconds: 60 },       // 5 min + 1 min SWR
-  topSearches: { ttlSeconds: 600, swrSeconds: 120 },  // 10 min + 2 min SWR
-} as const;
-```
-
----
-
-### Anti-Pattern: No Cache Monitoring or Observability
-
-**What happens**: Developers implement caching but have no way to measure cache hit rates, miss rates, or stale-serve rates.
-
-**Why it fails**: Without monitoring, you cannot tell if caching is effective, if TTLs are appropriate, or if cache invalidation is working. A cache with a 5% hit rate provides almost no benefit while adding complexity. A cache that never invalidates may be serving stale data without anyone noticing.
-
-**Fix**: Add cache status headers and logging to track hit/miss/stale rates. Monitor these metrics in your observability platform.
-
-```typescript
-// Add cache observability to every cached response
-import { Request, Response, NextFunction } from "express";
-
-interface CacheMetrics {
-  hits: number;
-  misses: number;
-  stale: number;
-}
-
-const metrics: CacheMetrics = { hits: 0, misses: 0, stale: 0 };
-
-export function trackCacheMetrics(req: Request, res: Response, next: NextFunction): void {
-  const originalJson = res.json.bind(res);
-
-  res.json = function (body: unknown) {
-    const cacheStatus = res.getHeader("X-Cache") as string;
-
-    if (cacheStatus === "HIT") metrics.hits++;
-    else if (cacheStatus === "MISS") metrics.misses++;
-    else if (cacheStatus === "STALE") metrics.stale++;
-
-    return originalJson(body);
-  };
-
-  next();
-}
-
-// Expose metrics endpoint for monitoring
-export function getCacheMetrics(): CacheMetrics & { hitRate: string } {
-  const total = metrics.hits + metrics.misses + metrics.stale;
-  const hitRate = total > 0 ? ((metrics.hits / total) * 100).toFixed(1) + "%" : "N/A";
-  return { ...metrics, hitRate };
-}
-```
+- [ ] Are all public, read-only API responses (Search, Catalog) cached at CDN and/or BFF level?
+- [ ] Are transactional/personal API responses (Checkout, Profile, OMS, Payments) explicitly NOT cached with `no-store` headers?
+- [ ] Do all caches have bounded TTLs (not permanent/infinite)?
+- [ ] Is there a cache invalidation mechanism (TTL + event-driven or manual purge)?
+- [ ] Are cache keys based on request parameters, not user identity?
+- [ ] Is `stale-while-revalidate` used for the best freshness/performance balance?
+- [ ] Are TTLs moderate (2-15 minutes) rather than extremely long (hours/days)?
+- [ ] Is cache observability in place (X-Cache headers, hit/miss metrics)?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [How the cache works](https://help.vtex.com/en/docs/tutorials/understanding-how-the-cache-works) — VTEX native caching behavior and cache layer architecture
 - [Cloud infrastructure](https://developers.vtex.com/docs/guides/cloud-infrastructure) — VTEX CDN, router, and caching infrastructure overview
@@ -3618,38 +2495,30 @@ export function getCacheMetrics(): CacheMetrics & { hitRate: string } {
 
 # Checkout API Proxy & OrderForm Management
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: How to securely proxy VTEX Checkout API operations through a BFF layer in headless implementations, including OrderForm lifecycle management, cart operations, order placement, and the checkout completion flow.
+Use this skill when building cart and checkout functionality for any headless VTEX storefront. Every cart and checkout operation must go through the BFF.
 
-**When to use it**: When building any headless storefront that needs shopping cart and checkout functionality. Every cart and checkout operation must go through the BFF — the Checkout API handles sensitive customer data (profile, address, payment) and must never be called directly from client-side code.
+- Implementing cart creation, item add/update/remove operations
+- Attaching profile, shipping, or payment data to an OrderForm
+- Implementing the 3-step order placement flow (place → pay → process)
+- Managing `orderFormId` and `CheckoutOrderFormOwnership` cookies server-side
 
-**What you'll learn**:
-- The OrderForm data structure and its lifecycle from cart creation to order placement
-- How to proxy all Checkout API operations through the BFF securely
-- How to manage `orderFormId` and `CheckoutOrderFormOwnership` cookie server-side
-- How to validate inputs server-side before forwarding to VTEX
+Do not use this skill for:
+- General BFF architecture and API routing (use [`headless-bff-architecture`](../headless-bff-architecture/skill.md))
+- Search API integration (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
+- Caching strategy decisions (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- ALL Checkout API calls MUST be proxied through the BFF — no exceptions. The Checkout API handles sensitive personal data (profile, address, payment).
+- Store `orderFormId` in a server-side session, never in `localStorage` or `sessionStorage`.
+- Capture and forward `CheckoutOrderFormOwnership` and `checkout.vtex.com` cookies between the BFF and VTEX on every request.
+- Validate all inputs server-side before forwarding to VTEX — never pass raw `req.body` directly.
+- Execute the 3-step order placement flow (place order → send payment → process order) in a single synchronous BFF handler to stay within the **5-minute window**.
+- Always store and reuse the existing `orderFormId` from the session — only create a new cart when no `orderFormId` exists.
 
-### Concept 1: The OrderForm
-
-The `orderForm` is the central data structure of VTEX Checkout. It contains every piece of information about a purchase:
-
-- **items**: Products in the cart (SKU ID, quantity, seller, price)
-- **clientProfileData**: Customer profile (email, name, document, phone)
-- **shippingData**: Delivery address and selected shipping option
-- **paymentData**: Payment method, installments, card info
-- **marketingData**: Coupons, UTM parameters
-- **totalizers**: Subtotals, discounts, shipping costs
-
-Each `orderForm` has a unique `orderFormId` that identifies the cart. When you call `GET /api/checkout/pub/orderForm`, VTEX either returns the current cart (if one exists for the session) or creates a new one.
-
-### Concept 2: OrderForm Sections (Attachments)
-
-Cart data is organized into "attachments" — sections of the OrderForm that can be updated independently:
+OrderForm attachment endpoints:
 
 | Attachment | Endpoint | Purpose |
 |---|---|---|
@@ -3659,58 +2528,22 @@ Cart data is organized into "attachments" — sections of the OrderForm that can
 | paymentData | `POST .../orderForm/{id}/attachments/paymentData` | Payment method selection |
 | marketingData | `POST .../orderForm/{id}/attachments/marketingData` | Coupons and UTM data |
 
-Each attachment update returns the full updated `orderForm`, so you always have the current state.
+## Hard constraints
 
-### Concept 3: Order Placement Flow
+### Constraint: ALL checkout operations MUST go through BFF
 
-Placing an order in VTEX follows a strict 3-step sequence that must complete within 5 minutes:
+Client-side code MUST NOT make direct HTTP requests to any VTEX Checkout API endpoint (`/api/checkout/`). All checkout operations — cart creation, item management, profile updates, shipping, payment, and order placement — must be proxied through the BFF layer.
 
-1. **Place order**: `POST /api/checkout/pub/orderForm/{orderFormId}/transaction` — Creates the order from the cart
-2. **Send payment**: `POST /api/payments/transactions/{transactionId}/payments` — Sends payment details to the gateway
-3. **Process order**: `POST /api/checkout/pub/gatewayCallback/{orderGroup}` — Triggers order processing
+**Why this matters**
 
-If steps 2 and 3 are not completed within 5 minutes of step 1, the order is automatically canceled and marked as `incomplete`.
+Checkout endpoints handle sensitive personal data (email, address, phone, payment details). Direct frontend calls expose the request/response flow to browser DevTools, extensions, and XSS attacks. Additionally, the BFF layer is needed to manage `VtexIdclientAutCookie` and `CheckoutOrderFormOwnership` cookies server-side, validate inputs, and prevent cart manipulation (e.g., price tampering).
 
-### Concept 4: CheckoutOrderFormOwnership Cookie
+**Detection**
 
-When a new cart is created, VTEX sends a `CheckoutOrderFormOwnership` cookie alongside the `checkout.vtex.com` cookie. This cookie ensures that only the customer who created the cart can access their personal information (profile, address). Without it, personal data in the OrderForm is masked.
+If you see `fetch` or `axios` calls to `/api/checkout/` in any client-side code (browser-executed JavaScript, frontend source files) → STOP immediately. All checkout calls must route through BFF endpoints.
 
-In a headless BFF, you must:
-1. Capture the `CheckoutOrderFormOwnership` cookie from VTEX responses
-2. Store it in the server-side session alongside the `orderFormId`
-3. Forward it back to VTEX on subsequent checkout requests
+**Correct**
 
-**Architecture/Data Flow**:
-
-```text
-Frontend
-    │
-    └── POST /api/bff/cart/items/add  {skuId, quantity, seller}
-            │
-            BFF Layer
-            │ 1. Validates input (skuId format, quantity > 0, seller exists)
-            │ 2. Reads orderFormId from server-side session
-            │ 3. Forwards CheckoutOrderFormOwnership cookie
-            │ 4. Calls VTEX: POST /api/checkout/pub/orderForm/{id}/items
-            │ 5. Updates session with new orderFormId if changed
-            │ 6. Returns sanitized orderForm to frontend
-            │
-            VTEX Checkout API
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: ALL Checkout Operations MUST Go Through BFF
-
-**Rule**: Client-side code MUST NOT make direct HTTP requests to any VTEX Checkout API endpoint (`/api/checkout/`). All checkout operations — cart creation, item management, profile updates, shipping, payment, and order placement — must be proxied through the BFF layer.
-
-**Why**: Checkout endpoints handle sensitive personal data (email, address, phone, payment details). Direct frontend calls expose the request/response flow to browser DevTools, extensions, and XSS attacks. Additionally, the BFF layer is needed to manage `VtexIdclientAutCookie` and `CheckoutOrderFormOwnership` cookies server-side, validate inputs, and prevent cart manipulation (e.g., price tampering).
-
-**Detection**: If you see `fetch` or `axios` calls to `/api/checkout/` in any client-side code (browser-executed JavaScript, frontend source files) → STOP immediately. All checkout calls must route through BFF endpoints.
-
-✅ **CORRECT**:
 ```typescript
 // Frontend — calls BFF endpoint, never VTEX directly
 async function addItemToCart(skuId: string, quantity: number, seller: string): Promise<OrderForm> {
@@ -3729,7 +2562,8 @@ async function addItemToCart(skuId: string, quantity: number, seller: string): P
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend — calls VTEX Checkout API directly (SECURITY VULNERABILITY)
 async function addItemToCart(skuId: string, quantity: number, seller: string): Promise<OrderForm> {
@@ -3750,15 +2584,20 @@ async function addItemToCart(skuId: string, quantity: number, seller: string): P
 
 ---
 
-### Constraint: orderFormId MUST Be Managed Server-Side
+### Constraint: orderFormId MUST be managed server-side
 
-**Rule**: The `orderFormId` MUST be stored in a secure server-side session. It SHOULD NOT be stored in `localStorage`, `sessionStorage`, or exposed to the frontend in a way that allows direct VTEX API calls.
+The `orderFormId` MUST be stored in a secure server-side session. It SHOULD NOT be stored in `localStorage`, `sessionStorage`, or exposed to the frontend in a way that allows direct VTEX API calls.
 
-**Why**: The `orderFormId` is the key to a customer's shopping cart and all data within it — profile information, shipping address, payment details. If exposed client-side, an attacker could use it to query VTEX directly and retrieve personal data, or manipulate the cart by adding/removing items through direct API calls bypassing any validation logic.
+**Why this matters**
 
-**Detection**: If you see `orderFormId` stored in `localStorage` or `sessionStorage` → STOP immediately. It should be managed in the BFF session.
+The `orderFormId` is the key to a customer's shopping cart and all data within it — profile information, shipping address, payment details. If exposed client-side, an attacker could use it to query VTEX directly and retrieve personal data, or manipulate the cart by adding/removing items through direct API calls bypassing any validation logic.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `orderFormId` stored in `localStorage` or `sessionStorage` → STOP immediately. It should be managed in the BFF session.
+
+**Correct**
+
 ```typescript
 // BFF — manages orderFormId in server-side session
 import { Router, Request, Response } from "express";
@@ -3807,7 +2646,8 @@ function sanitizeOrderForm(orderForm: Record<string, unknown>): Record<string, u
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend — stores orderFormId in localStorage (INSECURE)
 async function getCart(): Promise<OrderForm> {
@@ -3831,15 +2671,20 @@ async function getCart(): Promise<OrderForm> {
 
 ---
 
-### Constraint: MUST Validate All Inputs Server-Side
+### Constraint: MUST validate all inputs server-side before forwarding to VTEX
 
-**Rule**: The BFF MUST validate all input data before forwarding requests to the VTEX Checkout API. This includes validating SKU IDs, quantities, email formats, address fields, and coupon codes.
+The BFF MUST validate all input data before forwarding requests to the VTEX Checkout API. This includes validating SKU IDs, quantities, email formats, address fields, and coupon codes.
 
-**Why**: Without server-side validation, malicious users can send crafted requests through the BFF to VTEX with invalid or manipulative data — negative quantities, SQL injection in text fields, or spoofed seller IDs. While VTEX has its own validation, defense-in-depth requires validating at the BFF layer to catch issues early and provide clear error messages.
+**Why this matters**
 
-**Detection**: If BFF route handlers pass `req.body` directly to VTEX API calls without any validation or sanitization → STOP immediately. All inputs must be validated before proxying.
+Without server-side validation, malicious users can send crafted requests through the BFF to VTEX with invalid or manipulative data — negative quantities, SQL injection in text fields, or spoofed seller IDs. While VTEX has its own validation, defense-in-depth requires validating at the BFF layer to catch issues early and provide clear error messages.
 
-✅ **CORRECT**:
+**Detection**
+
+If BFF route handlers pass `req.body` directly to VTEX API calls without any validation or sanitization → STOP immediately. All inputs must be validated before proxying.
+
+**Correct**
+
 ```typescript
 // BFF — validates inputs before forwarding to VTEX
 import { Router, Request, Response } from "express";
@@ -3902,7 +2747,8 @@ cartItemsRoutes.post("/", async (req: Request, res: Response) => {
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // BFF — passes raw input to VTEX without validation (UNSAFE)
 cartRoutes.post("/items", async (req: Request, res: Response) => {
@@ -3920,13 +2766,27 @@ cartRoutes.post("/items", async (req: Request, res: Response) => {
 });
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Request flow through the BFF for checkout operations:
 
-### Step 1: Create a VTEX Checkout API Client
+```text
+Frontend
+    │
+    └── POST /api/bff/cart/items/add  {skuId, quantity, seller}
+            │
+            BFF Layer
+            │ 1. Validates input (skuId format, quantity > 0, seller exists)
+            │ 2. Reads orderFormId from server-side session
+            │ 3. Forwards CheckoutOrderFormOwnership cookie
+            │ 4. Calls VTEX: POST /api/checkout/pub/orderForm/{id}/items
+            │ 5. Updates session with new orderFormId if changed
+            │ 6. Returns sanitized orderForm to frontend
+            │
+            VTEX Checkout API
+```
 
-Build a shared utility that handles authentication and cookie management for all Checkout API calls.
+VTEX Checkout API client with cookie management:
 
 ```typescript
 // server/vtex-checkout-client.ts
@@ -4001,9 +2861,7 @@ export async function vtexCheckout<T>(
 }
 ```
 
-### Step 2: Implement Cart Management BFF Routes
-
-Create BFF endpoints for all cart operations: get cart, add items, update items, remove items.
+Cart management BFF routes:
 
 ```typescript
 // server/routes/cart.ts
@@ -4011,22 +2869,6 @@ import { Router, Request, Response } from "express";
 import { vtexCheckout } from "../vtex-checkout-client";
 
 export const cartRoutes = Router();
-
-interface OrderForm {
-  orderFormId: string;
-  items: Array<{
-    id: string;
-    productId: string;
-    name: string;
-    quantity: number;
-    price: number;
-    imageUrl: string;
-    seller: string;
-  }>;
-  totalizers: Array<{ id: string; name: string; value: number }>;
-  value: number;
-  [key: string]: unknown;
-}
 
 // GET /api/bff/cart — get or create cart
 cartRoutes.get("/", async (req: Request, res: Response) => {
@@ -4086,45 +2928,9 @@ cartRoutes.post("/items", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Failed to add items to cart" });
   }
 });
-
-// PATCH /api/bff/cart/items/:index — update item quantity
-cartRoutes.patch("/items/:index", async (req: Request, res: Response) => {
-  const index = parseInt(req.params.index, 10);
-  const { quantity } = req.body as { quantity: number };
-
-  if (isNaN(index) || index < 0) {
-    return res.status(400).json({ error: "Invalid item index" });
-  }
-  if (typeof quantity !== "number" || quantity < 0) {
-    return res.status(400).json({ error: "Quantity must be a non-negative number" });
-  }
-
-  const orderFormId = req.session.orderFormId;
-  if (!orderFormId) {
-    return res.status(400).json({ error: "No active cart" });
-  }
-
-  try {
-    const result = await vtexCheckout<OrderForm>({
-      path: `/api/checkout/pub/orderForm/${orderFormId}/items/${index}`,
-      method: "PATCH",
-      body: { quantity },
-      cookies: req.session.vtexCookies || {},
-      userToken: req.session.vtexAuthToken,
-    });
-
-    req.session.vtexCookies = result.cookies;
-    res.json(result.data);
-  } catch (error) {
-    console.error("Error updating item:", error);
-    res.status(500).json({ error: "Failed to update cart item" });
-  }
-});
 ```
 
-### Step 3: Implement Order Placement BFF Route
-
-The order placement flow is a multi-step process that must complete within 5 minutes.
+Order placement — all 3 steps in a single handler to respect the **5-minute window**:
 
 ```typescript
 // server/routes/order.ts
@@ -4138,12 +2944,8 @@ const VTEX_ENVIRONMENT = process.env.VTEX_ENVIRONMENT || "vtexcommercestable";
 const VTEX_APP_KEY = process.env.VTEX_APP_KEY!;
 const VTEX_APP_TOKEN = process.env.VTEX_APP_TOKEN!;
 
-interface PlaceOrderResponse {
-  orders: Array<{ orderId: string; transactionData: { merchantTransactions: Array<{ transactionId: string }> } }>;
-  orderGroup: string;
-}
-
 // POST /api/bff/order/place — place order from existing cart
+// CRITICAL: All 3 steps must complete within 5 minutes or the order is canceled
 orderRoutes.post("/place", async (req: Request, res: Response) => {
   const orderFormId = req.session.orderFormId;
   if (!orderFormId) {
@@ -4151,7 +2953,7 @@ orderRoutes.post("/place", async (req: Request, res: Response) => {
   }
 
   try {
-    // Step 1: Place order from existing cart
+    // Step 1: Place order — starts the 5-minute timer
     const placeResult = await vtexCheckout<PlaceOrderResponse>({
       path: `/api/checkout/pub/orderForm/${orderFormId}/transaction`,
       method: "POST",
@@ -4170,7 +2972,7 @@ orderRoutes.post("/place", async (req: Request, res: Response) => {
     const transactionId =
       orders[0].transactionData.merchantTransactions[0]?.transactionId;
 
-    // Step 2: Send payment info (from frontend-provided payment data)
+    // Step 2: Send payment — immediately after placement
     const { paymentData } = req.body as {
       paymentData: {
         paymentSystem: number;
@@ -4211,8 +3013,8 @@ orderRoutes.post("/place", async (req: Request, res: Response) => {
       return res.status(500).json({ error: "Payment submission failed" });
     }
 
-    // Step 3: Process order (trigger gateway callback)
-    const processResult = await vtexCheckout<unknown>({
+    // Step 3: Process order — immediately after payment
+    await vtexCheckout<unknown>({
       path: `/api/checkout/pub/gatewayCallback/${orderGroup}`,
       method: "POST",
       cookies: req.session.vtexCookies || {},
@@ -4235,200 +3037,88 @@ orderRoutes.post("/place", async (req: Request, res: Response) => {
 });
 ```
 
-### Complete Example
+## Common failure modes
 
-Full BFF cart and checkout flow wired together:
+- **Creating a new cart on every page load**: Calling `GET /api/checkout/pub/orderForm` without an `orderFormId` on every page load creates a new empty cart each time, abandoning the previous one. Always store and reuse the `orderFormId` from the server-side session.
 
-```typescript
-// server/index.ts — mount all checkout routes
-import express from "express";
-import session from "express-session";
-import { cartRoutes } from "./routes/cart";
-import { orderRoutes } from "./routes/order";
+  ```typescript
+  // Always check for existing orderFormId first
+  cartRoutes.get("/", async (req: Request, res: Response) => {
+    const orderFormId = req.session.orderFormId;
 
-const app = express();
+    const path = orderFormId
+      ? `/api/checkout/pub/orderForm/${orderFormId}` // Retrieve existing cart
+      : "/api/checkout/pub/orderForm"; // Create new cart only if none exists
 
-app.use(express.json());
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET!,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: "strict",
-      maxAge: 24 * 60 * 60 * 1000,
-    },
-  })
-);
-
-// Cart routes: GET /api/bff/cart, POST /api/bff/cart/items, PATCH /api/bff/cart/items/:index
-app.use("/api/bff/cart", cartRoutes);
-
-// Order routes: POST /api/bff/order/place
-app.use("/api/bff/order", orderRoutes);
-
-// Attachment routes for profile, shipping, payment
-app.post("/api/bff/cart/profile", async (req, res) => {
-  const { email, firstName, lastName, document, documentType, phone } = req.body;
-
-  // Validate email format
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.status(400).json({ error: "Valid email is required" });
-  }
-
-  const orderFormId = req.session.orderFormId;
-  if (!orderFormId) {
-    return res.status(400).json({ error: "No active cart" });
-  }
-
-  const { vtexCheckout } = await import("./vtex-checkout-client");
-  const result = await vtexCheckout({
-    path: `/api/checkout/pub/orderForm/${orderFormId}/attachments/clientProfileData`,
-    method: "POST",
-    body: { email, firstName, lastName, document, documentType, phone },
-    cookies: req.session.vtexCookies || {},
-    userToken: req.session.vtexAuthToken,
-  });
-
-  req.session.vtexCookies = result.cookies;
-  res.json(result.data);
-});
-
-app.post("/api/bff/cart/shipping", async (req, res) => {
-  const { address, logisticsInfo } = req.body;
-
-  if (!address || !address.postalCode || !address.country) {
-    return res.status(400).json({ error: "Address with postalCode and country is required" });
-  }
-
-  const orderFormId = req.session.orderFormId;
-  if (!orderFormId) {
-    return res.status(400).json({ error: "No active cart" });
-  }
-
-  const { vtexCheckout } = await import("./vtex-checkout-client");
-  const result = await vtexCheckout({
-    path: `/api/checkout/pub/orderForm/${orderFormId}/attachments/shippingData`,
-    method: "POST",
-    body: {
-      clearAddressIfPostalCodeNotFound: false,
-      selectedAddresses: [address],
-      logisticsInfo: logisticsInfo || [],
-    },
-    cookies: req.session.vtexCookies || {},
-    userToken: req.session.vtexAuthToken,
-  });
-
-  req.session.vtexCookies = result.cookies;
-  res.json(result.data);
-});
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`BFF server running on port ${PORT}`);
-});
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Creating a New Cart on Every Page Load
-
-**What happens**: Developers call `GET /api/checkout/pub/orderForm` (without an `orderFormId`) on every page load, creating a new empty cart each time instead of retrieving the existing one.
-
-**Why it fails**: Each call without an `orderFormId` creates a new cart, abandoning the previous one. Items the shopper added are lost. VTEX creates orphaned orderForms that consume resources. The shopper must re-add all items every time they navigate.
-
-**Fix**: Always store and reuse the `orderFormId` from the server-side session. Only call the "create new cart" endpoint when no `orderFormId` exists.
-
-```typescript
-// Always check for existing orderFormId first
-cartRoutes.get("/", async (req: Request, res: Response) => {
-  const orderFormId = req.session.orderFormId;
-
-  const path = orderFormId
-    ? `/api/checkout/pub/orderForm/${orderFormId}` // Retrieve existing cart
-    : "/api/checkout/pub/orderForm"; // Create new cart only if none exists
-
-  const result = await vtexCheckout<OrderForm>({
-    path,
-    cookies: req.session.vtexCookies || {},
-    userToken: req.session.vtexAuthToken,
-  });
-
-  req.session.orderFormId = result.data.orderFormId;
-  req.session.vtexCookies = result.cookies;
-  res.json(result.data);
-});
-```
-
----
-
-### Anti-Pattern: Ignoring the 5-Minute Order Processing Window
-
-**What happens**: Developers place an order (step 1) but delay sending payment information or processing the order, exceeding the 5-minute window.
-
-**Why it fails**: VTEX automatically cancels orders that are not fully processed within 5 minutes of placement. The order is tagged as `incomplete` and the customer must start the checkout flow over. This creates a terrible user experience and potential inventory issues.
-
-**Fix**: Execute all three order placement steps (place order → send payment → process order) sequentially and immediately in a single BFF request handler. Never split these across multiple independent frontend calls.
-
-```typescript
-// Execute all 3 steps in a single, synchronous flow
-orderRoutes.post("/place", async (req: Request, res: Response) => {
-  try {
-    // Step 1: Place order — starts the 5-minute timer
-    const placeResult = await vtexCheckout<PlaceOrderResponse>({
-      path: `/api/checkout/pub/orderForm/${req.session.orderFormId}/transaction`,
-      method: "POST",
-      body: { referenceId: req.session.orderFormId },
+    const result = await vtexCheckout<OrderForm>({
+      path,
       cookies: req.session.vtexCookies || {},
+      userToken: req.session.vtexAuthToken,
     });
 
-    // Step 2: Send payment — immediately after placement
-    await sendPayment(placeResult.data);
+    req.session.orderFormId = result.data.orderFormId;
+    req.session.vtexCookies = result.cookies;
+    res.json(result.data);
+  });
+  ```
 
-    // Step 3: Process order — immediately after payment
-    await processOrder(placeResult.data.orderGroup);
+- **Ignoring the 5-minute order processing window**: Placing an order (step 1) but delaying payment or processing beyond 5 minutes causes VTEX to automatically cancel the order as `incomplete`. Execute all three steps (place order → send payment → process order) sequentially and immediately in a single BFF request handler. Never split these across multiple independent frontend calls.
 
-    res.json({ success: true, orderId: placeResult.data.orders[0].orderId });
-  } catch (error) {
-    console.error("Order placement failed:", error);
-    res.status(500).json({ error: "Order placement failed" });
+  ```typescript
+  // Execute all 3 steps in a single, synchronous flow
+  orderRoutes.post("/place", async (req: Request, res: Response) => {
+    try {
+      // Step 1: Place order — starts the 5-minute timer
+      const placeResult = await vtexCheckout<PlaceOrderResponse>({
+        path: `/api/checkout/pub/orderForm/${req.session.orderFormId}/transaction`,
+        method: "POST",
+        body: { referenceId: req.session.orderFormId },
+        cookies: req.session.vtexCookies || {},
+      });
+
+      // Step 2: Send payment — immediately after placement
+      await sendPayment(placeResult.data);
+
+      // Step 3: Process order — immediately after payment
+      await processOrder(placeResult.data.orderGroup);
+
+      res.json({ success: true, orderId: placeResult.data.orders[0].orderId });
+    } catch (error) {
+      console.error("Order placement failed:", error);
+      res.status(500).json({ error: "Order placement failed" });
+    }
+  });
+  ```
+
+- **Exposing raw VTEX error messages to the frontend**: Forwarding VTEX API error responses directly to the frontend leaks internal details (account names, API paths, data structures). Map VTEX errors to user-friendly messages in the BFF and log the full error server-side.
+
+  ```typescript
+  // Map VTEX errors to safe, user-friendly messages
+  function mapCheckoutError(vtexError: string, statusCode: number): { code: string; message: string } {
+    if (statusCode === 400 && vtexError.includes("item")) {
+      return { code: "INVALID_ITEM", message: "One or more items are unavailable" };
+    }
+    if (statusCode === 400 && vtexError.includes("address")) {
+      return { code: "INVALID_ADDRESS", message: "Please check your shipping address" };
+    }
+    if (statusCode === 409) {
+      return { code: "CART_CONFLICT", message: "Your cart was updated. Please review your items." };
+    }
+    return { code: "CHECKOUT_ERROR", message: "An error occurred during checkout. Please try again." };
   }
-});
-```
+  ```
 
----
+## Review checklist
 
-### Anti-Pattern: Exposing Raw VTEX Error Messages to Frontend
-
-**What happens**: Developers forward VTEX API error responses directly to the frontend without sanitization.
-
-**Why it fails**: VTEX error responses may contain internal implementation details, account names, API paths, or data structures that leak information about your backend architecture. This information can be used by attackers to craft targeted attacks.
-
-**Fix**: Map VTEX errors to user-friendly messages in the BFF. Log the full error server-side for debugging.
-
-```typescript
-// Map VTEX errors to safe, user-friendly messages
-function mapCheckoutError(vtexError: string, statusCode: number): { code: string; message: string } {
-  if (statusCode === 400 && vtexError.includes("item")) {
-    return { code: "INVALID_ITEM", message: "One or more items are unavailable" };
-  }
-  if (statusCode === 400 && vtexError.includes("address")) {
-    return { code: "INVALID_ADDRESS", message: "Please check your shipping address" };
-  }
-  if (statusCode === 409) {
-    return { code: "CART_CONFLICT", message: "Your cart was updated. Please review your items." };
-  }
-  return { code: "CHECKOUT_ERROR", message: "An error occurred during checkout. Please try again." };
-}
-```
+- [ ] Are ALL checkout API calls routed through the BFF (no direct frontend calls to `/api/checkout/`)?
+- [ ] Is `orderFormId` stored in a server-side session, not in `localStorage` or `sessionStorage`?
+- [ ] Are `CheckoutOrderFormOwnership` and `checkout.vtex.com` cookies captured from VTEX responses and forwarded on subsequent requests?
+- [ ] Are all inputs validated server-side before forwarding to VTEX?
+- [ ] Does the order placement handler execute all 3 steps (place → pay → process) in a single synchronous flow within the 5-minute window?
+- [ ] Is the existing `orderFormId` reused from the session rather than creating a new cart on every page load?
+- [ ] Are VTEX error responses sanitized before being sent to the frontend?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Headless cart and checkout](https://developers.vtex.com/docs/guides/headless-cart-and-checkout) — Complete guide to implementing cart and checkout in headless stores
 - [Checkout API reference](https://developers.vtex.com/docs/api-reference/checkout-api) — Full API reference for all Checkout endpoints
@@ -4441,40 +3131,29 @@ function mapCheckoutError(vtexError: string, statusCode: number): { code: string
 
 # Intelligent Search API Integration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The VTEX Intelligent Search API — the only VTEX API that is fully public and designed for direct frontend consumption. Covers all search endpoints, query parameters, response structures, faceted navigation, and the critical requirement to send analytics events.
+Use this skill when implementing product search, category browsing, autocomplete, or faceted filtering in a headless VTEX storefront.
 
-**When to use it**: When implementing product search, category browsing, autocomplete, or faceted filtering in a headless VTEX storefront. This is the search solution for any custom headless frontend.
+- Building a search results page with product listings
+- Implementing faceted navigation (category, brand, price, color filters)
+- Adding autocomplete suggestions to a search input
+- Wiring up search analytics events for Intelligent Search ranking
 
-**What you'll learn**:
-- All Intelligent Search API endpoints and their purposes
-- How to implement faceted navigation with proper query parameters
-- How to paginate results correctly using `from`/`to` parameters
-- Why analytics events are mandatory and how to send them via the Intelligent Search Events API - Headless
+Do not use this skill for:
+- BFF architecture and API routing decisions (use [`headless-bff-architecture`](../headless-bff-architecture/skill.md))
+- Checkout or cart API integration (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
+- Caching strategy and TTL configuration (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Call Intelligent Search **directly from the frontend** — it is the ONE exception to the "everything through BFF" rule. It is fully public and requires no authentication.
+- Do NOT proxy Intelligent Search through the BFF unless you have a specific need (e.g., server-side rendering). Proxying adds latency on a high-frequency operation.
+- Always use the API's `sort` parameter and facet paths for filtering and sorting — never re-sort or re-filter results client-side.
+- Always include `from`, `to`, and `locale` parameters in every search request.
+- Always send analytics events to the Intelligent Search Events API — without them, search ranking degrades over time.
 
-### Concept 1: Intelligent Search Is a PUBLIC API
-
-Unlike most VTEX APIs, Intelligent Search does **not** require API keys or authentication tokens. It is designed to be called directly from the frontend. The base URL pattern is:
-
-```text
-https://{accountName}.{environment}.com.br/api/io/_v/api/intelligent-search/{endpoint}
-```
-
-This means:
-- **No BFF proxy needed** for search queries (and proxying adds unnecessary latency)
-- Results are CDN-cacheable for better performance
-- No risk of credential exposure
-
-This is the ONE exception to the "everything through BFF" rule in headless VTEX architecture.
-
-### Concept 2: Search Endpoints
-
-Intelligent Search provides these core endpoints:
+Search endpoints overview:
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -4486,60 +3165,26 @@ Intelligent Search provides these core endpoints:
 | `/search_suggestions` | GET | Get suggested terms similar to the search term |
 | `/banners/{facets}` | GET | Get banners configured for a query |
 
-### Concept 3: Faceted Navigation
-
-Facets are the combination of filters applied to a search. The `facets` path parameter follows the format:
-
-```text
-/{facetKey1}/{facetValue1}/{facetKey2}/{facetValue2}
-```
-
-Filter combination rules:
+Facet combination rules:
 - **Same facet type → OR (union)**: Selecting "Red" and "Blue" for color returns products matching either color
 - **Different facet types → AND (intersection)**: Selecting "Red" color and "Nike" brand returns only red Nike products
 
-Common facet keys include: `category-1`, `category-2`, `brand`, `price`, `productClusterIds`, and custom specifications configured as filterable in Intelligent Search settings.
+## Hard constraints
 
-### Concept 4: Analytics Events (Mandatory)
+### Constraint: MUST send analytics events to Intelligent Search Events API
 
-Intelligent Search improves results based on shopper behavior. For headless implementations, you **must** send analytics events using the **Intelligent Search Events API - Headless**. Without events, search ranking cannot learn and results degrade over time.
+Every headless search implementation MUST send analytics events to the Intelligent Search Events API - Headless. At minimum, send search impression events when results are displayed and click events when a product is selected from search results.
 
-The events API base URL is:
-```text
-https://sp.vtex.com/event-api/v1/{accountName}/event
-```
+**Why this matters**
 
-**Architecture/Data Flow**:
+Intelligent Search uses machine learning to rank results based on user behavior. Without analytics events, the search engine has no behavioral data and cannot personalize or optimize results. Over time, search quality degrades compared to stores that send events. Additionally, VTEX Admin search analytics dashboards will show no data.
 
-```text
-Frontend (Browser)
-    │
-    ├── GET /api/io/_v/api/intelligent-search/product_search/...
-    │   └── Returns: products, facets, pagination info
-    │
-    ├── GET /api/io/_v/api/intelligent-search/facets/...
-    │   └── Returns: available filters with counts
-    │
-    ├── GET /api/io/_v/api/intelligent-search/autocomplete_suggestions?query=...
-    │   └── Returns: suggested terms + suggested products
-    │
-    └── POST https://sp.vtex.com/event-api/v1/{account}/event
-        └── Sends: search impressions, clicks, add-to-cart events
-```
+**Detection**
 
-## Constraints
+If a search implementation renders results from Intelligent Search but has no calls to `sp.vtex.com/event-api` or the Intelligent Search Events API → STOP immediately. Analytics events must be implemented alongside search.
 
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+**Correct**
 
-### Constraint: MUST Send Analytics Events
-
-**Rule**: Every headless search implementation MUST send analytics events to the Intelligent Search Events API - Headless. At minimum, send search impression events when results are displayed and click events when a product is selected from search results.
-
-**Why**: Intelligent Search uses machine learning to rank results based on user behavior. Without analytics events, the search engine has no behavioral data and cannot personalize or optimize results. Over time, search quality degrades compared to stores that send events. Additionally, VTEX Admin search analytics dashboards will show no data.
-
-**Detection**: If a search implementation renders results from Intelligent Search but has no calls to `sp.vtex.com/event-api` or the Intelligent Search Events API → STOP immediately. Analytics events must be implemented alongside search.
-
-✅ **CORRECT**:
 ```typescript
 // search-analytics.ts — sends events to Intelligent Search Events API
 const ACCOUNT_NAME = "mystore";
@@ -4590,7 +3235,8 @@ function onSearchResultsRendered(query: string, products: Product[]): void {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Search works but NO analytics events are sent — search ranking degrades
 async function searchProducts(query: string): Promise<Product[]> {
@@ -4605,15 +3251,20 @@ async function searchProducts(query: string): Promise<Product[]> {
 
 ---
 
-### Constraint: MUST Paginate Results Correctly
+### Constraint: MUST paginate results with `from` and `to` parameters
 
-**Rule**: Every product search request MUST include `from` and `to` query parameters to control pagination. The maximum page size is 50 items (`to - from` must not exceed 49, since indices are inclusive and zero-based).
+Every product search request MUST include `from` and `to` query parameters to control pagination. The maximum page size is 50 items (`to - from` must not exceed 49, since indices are inclusive and zero-based).
 
-**Why**: Without pagination parameters, the API defaults to a small result set. Requesting too many results in a single call (or not paginating at all) causes slow responses, high memory usage on the client, and poor user experience. Additionally, the API enforces a maximum of 50 items per request.
+**Why this matters**
 
-**Detection**: If a call to `/product_search/` does not include `from` and `to` query parameters → STOP immediately. Pagination must always be explicit.
+Without pagination parameters, the API defaults to a small result set. Requesting too many results in a single call (or not paginating at all) causes slow responses, high memory usage on the client, and poor user experience. The API enforces a maximum of 50 items per request.
 
-✅ **CORRECT**:
+**Detection**
+
+If a call to `/product_search/` does not include `from` and `to` query parameters → STOP immediately. Pagination must always be explicit.
+
+**Correct**
+
 ```typescript
 // Properly paginated search with from/to parameters
 interface SearchOptions {
@@ -4656,7 +3307,8 @@ const results = await searchProducts({
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // No pagination — returns default small result set, no way to load more
 async function searchProducts(query: string): Promise<SearchResponse> {
@@ -4670,15 +3322,20 @@ async function searchProducts(query: string): Promise<SearchResponse> {
 
 ---
 
-### Constraint: Do NOT Unnecessarily Proxy Intelligent Search Through BFF
+### Constraint: Do NOT unnecessarily proxy Intelligent Search through BFF
 
-**Rule**: Intelligent Search API requests SHOULD be made directly from the frontend. Do not route search traffic through the BFF unless you have a specific need (e.g., server-side rendering, adding custom business logic).
+Intelligent Search API requests SHOULD be made directly from the frontend. Do not route search traffic through the BFF unless you have a specific need (e.g., server-side rendering, adding custom business logic).
 
-**Why**: Intelligent Search is a public API that does not require authentication. Adding a BFF proxy layer introduces an additional network hop, increases latency on every search operation, adds server cost, and prevents the CDN from caching responses efficiently. Search queries are high-frequency operations — even 50ms of added latency impacts conversion.
+**Why this matters**
 
-**Detection**: If all Intelligent Search calls go through a BFF endpoint instead of directly to VTEX → note this to the developer. It is not a security issue but a performance concern. If there is no justification (like SSR), recommend direct frontend calls.
+Intelligent Search is a public API that does not require authentication. Adding a BFF proxy layer introduces an additional network hop, increases latency on every search operation, adds server cost, and prevents the CDN from caching responses efficiently. Search queries are high-frequency operations — even 50ms of added latency impacts conversion.
 
-✅ **CORRECT**:
+**Detection**
+
+If all Intelligent Search calls go through a BFF endpoint instead of directly to VTEX → note this to the developer. It is not a security issue but a performance concern. If there is no justification (like SSR), recommend direct frontend calls.
+
+**Correct**
+
 ```typescript
 // Frontend — calls Intelligent Search directly (no BFF needed)
 const VTEX_SEARCH_BASE = `https://${ACCOUNT}.vtexcommercestable.com.br/api/io/_v/api/intelligent-search`;
@@ -4702,7 +3359,8 @@ export async function getFacets(facetPath: string, query: string, locale: string
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // BFF proxy for Intelligent Search — unnecessary overhead
 // server/routes/search.ts
@@ -4717,13 +3375,27 @@ router.get("/api/bff/search", async (req, res) => {
 });
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Data flow for Intelligent Search in a headless storefront:
 
-### Step 1: Create a Search API Client
+```text
+Frontend (Browser)
+    │
+    ├── GET /api/io/_v/api/intelligent-search/product_search/...
+    │   └── Returns: products, facets, pagination info
+    │
+    ├── GET /api/io/_v/api/intelligent-search/facets/...
+    │   └── Returns: available filters with counts
+    │
+    ├── GET /api/io/_v/api/intelligent-search/autocomplete_suggestions?query=...
+    │   └── Returns: suggested terms + suggested products
+    │
+    └── POST https://sp.vtex.com/event-api/v1/{account}/event
+        └── Sends: search impressions, clicks, add-to-cart events
+```
 
-Build a typed client for all Intelligent Search endpoints. This runs in the frontend.
+Typed search API client for all endpoints:
 
 ```typescript
 // lib/intelligent-search-client.ts
@@ -4739,54 +3411,6 @@ interface ProductSearchParams {
   facets?: string;
   sort?: "price:asc" | "price:desc" | "orders:desc" | "name:asc" | "name:desc" | "release:desc" | "discount:desc";
   hideUnavailableItems?: boolean;
-}
-
-interface SearchProduct {
-  productId: string;
-  productName: string;
-  brand: string;
-  brandId: number;
-  link: string;
-  linkText: string;
-  categories: string[];
-  priceRange: {
-    sellingPrice: { highPrice: number; lowPrice: number };
-    listPrice: { highPrice: number; lowPrice: number };
-  };
-  items: Array<{
-    itemId: string;
-    name: string;
-    images: Array<{ imageUrl: string; imageLabel: string }>;
-    sellers: Array<{
-      sellerId: string;
-      sellerName: string;
-      commertialOffer: {
-        Price: number;
-        ListPrice: number;
-        AvailableQuantity: number;
-      };
-    }>;
-  }>;
-}
-
-interface ProductSearchResponse {
-  products: SearchProduct[];
-  recordsFiltered: number;
-  correction?: { misspelled: boolean };
-  fuzzy: string;
-  operator: string;
-  translated: boolean;
-  pagination: {
-    count: number;
-    current: { index: number; proxyUrl: string };
-    before: Array<{ index: number; proxyUrl: string }>;
-    after: Array<{ index: number; proxyUrl: string }>;
-    perPage: number;
-    next: { index: number; proxyUrl: string };
-    previous: { index: number; proxyUrl: string };
-    first: { index: number; proxyUrl: string };
-    last: { index: number; proxyUrl: string };
-  };
 }
 
 export async function productSearch(params: ProductSearchParams): Promise<ProductSearchResponse> {
@@ -4811,39 +3435,10 @@ export async function productSearch(params: ProductSearchParams): Promise<Produc
 }
 ```
 
-### Step 2: Implement Faceted Navigation
-
-Fetch available facets for the current query and render filter UI. Update the search when filters change.
+Faceted navigation helper:
 
 ```typescript
 // lib/facets.ts
-interface FacetValue {
-  id: string;
-  quantity: number;
-  name: string;
-  key: string;
-  value: string;
-  selected: boolean;
-  href: string;
-}
-
-interface Facet {
-  type: "TEXT" | "NUMBER" | "PRICERANGE";
-  name: string;
-  hidden: boolean;
-  quantity: number;
-  values: FacetValue[];
-}
-
-interface FacetsResponse {
-  facets: Facet[];
-  breadcrumb: Array<{ name: string; href: string }>;
-  queryArgs: {
-    query: string;
-    map: string;
-  };
-}
-
 export async function getFacets(
   facetPath: string,
   query: string,
@@ -4871,42 +3466,10 @@ export function buildFacetPath(selectedFilters: Record<string, string[]>): strin
 }
 ```
 
-### Step 3: Implement Autocomplete
-
-Wire up the autocomplete endpoint to your search input for real-time suggestions.
+Debounced autocomplete for search inputs:
 
 ```typescript
 // lib/autocomplete.ts
-interface AutocompleteSuggestion {
-  term: string;
-  count: number;
-  attributes: Array<{
-    key: string;
-    value: string;
-    labelKey: string;
-    labelValue: string;
-  }>;
-}
-
-interface AutocompleteResponse {
-  searches: AutocompleteSuggestion[];
-}
-
-export async function getAutocompleteSuggestions(
-  query: string,
-  locale: string
-): Promise<AutocompleteResponse> {
-  const params = new URLSearchParams({ query, locale });
-  const url = `${BASE_URL}/autocomplete_suggestions?${params}`;
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Autocomplete failed: ${response.status}`);
-  }
-  return response.json();
-}
-
-// Debounced autocomplete for use in search inputs
 export function createDebouncedAutocomplete(delayMs: number = 300) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -4923,21 +3486,21 @@ export function createDebouncedAutocomplete(delayMs: number = 300) {
     }
 
     timeoutId = setTimeout(async () => {
-      const suggestions = await getAutocompleteSuggestions(query, locale);
+      const params = new URLSearchParams({ query, locale });
+      const response = await fetch(`${BASE_URL}/autocomplete_suggestions?${params}`);
+      const suggestions = await response.json();
       callback(suggestions);
     }, delayMs);
   };
 }
 ```
 
-### Complete Example
-
-A full search implementation with products, facets, autocomplete, and analytics:
+Full search orchestration with analytics:
 
 ```typescript
 // search-page.ts — framework-agnostic search orchestration
-import { productSearch, ProductSearchResponse } from "./lib/intelligent-search-client";
-import { getFacets, buildFacetPath, FacetsResponse } from "./lib/facets";
+import { productSearch } from "./lib/intelligent-search-client";
+import { getFacets, buildFacetPath } from "./lib/facets";
 import { createDebouncedAutocomplete } from "./lib/autocomplete";
 import { sendSearchEvent } from "./search-analytics";
 
@@ -4947,7 +3510,6 @@ interface SearchState {
   pageSize: number;
   locale: string;
   selectedFilters: Record<string, string[]>;
-  sort?: string;
   results: ProductSearchResponse | null;
   facets: FacetsResponse | null;
 }
@@ -4962,9 +3524,6 @@ const state: SearchState = {
   facets: null,
 };
 
-const debouncedAutocomplete = createDebouncedAutocomplete(300);
-
-// Execute search with current state
 async function executeSearch(): Promise<void> {
   const facetPath = buildFacetPath(state.selectedFilters);
 
@@ -4999,47 +3558,7 @@ async function executeSearch(): Promise<void> {
   });
 }
 
-// Handle search input
-function onSearchInput(query: string): void {
-  debouncedAutocomplete(query, state.locale, (suggestions) => {
-    // Render autocomplete dropdown — implementation depends on your UI framework
-    renderAutocomplete(suggestions);
-  });
-}
-
-// Handle search submit
-function onSearchSubmit(query: string): void {
-  state.query = query;
-  state.page = 0;
-  state.selectedFilters = {};
-  executeSearch();
-}
-
-// Handle filter toggle
-function onFilterToggle(facetKey: string, facetValue: string): void {
-  const current = state.selectedFilters[facetKey] || [];
-  const index = current.indexOf(facetValue);
-
-  if (index === -1) {
-    state.selectedFilters[facetKey] = [...current, facetValue];
-  } else {
-    state.selectedFilters[facetKey] = current.filter((v) => v !== facetValue);
-    if (state.selectedFilters[facetKey].length === 0) {
-      delete state.selectedFilters[facetKey];
-    }
-  }
-
-  state.page = 0;
-  executeSearch();
-}
-
-// Handle pagination
-function onPageChange(newPage: number): void {
-  state.page = newPage;
-  executeSearch();
-}
-
-// Handle product click from search results
+// Handle product click from search results — send click event
 function onProductClick(productId: string, position: number): void {
   sendSearchEvent({
     type: "search.click",
@@ -5053,85 +3572,64 @@ function onProductClick(productId: string, position: number): void {
     products: [{ productId, position }],
   });
 }
-
-// Placeholder render function — replace with your framework's rendering
-function renderAutocomplete(suggestions: { searches: Array<{ term: string }> }): void {
-  // Your framework-specific rendering logic here
-  console.log("Autocomplete suggestions:", suggestions.searches);
-}
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Not sending the `locale` parameter**: Without `locale`, Intelligent Search may return results in the wrong language or fail to apply locale-specific relevance rules. Multi-language stores will display mixed-language results. Always include `locale` in every request.
 
-### Anti-Pattern: Not Sending the `locale` Parameter
+  ```typescript
+  // Always include locale in search parameters
+  const params = new URLSearchParams({
+    query: "shoes",
+    locale: "en-US", // Required for correct language processing
+    from: "0",
+    to: "19",
+  });
+  ```
 
-**What happens**: Developers omit the `locale` query parameter from search requests.
+- **Loading all products at once**: Setting very large `from`/`to` ranges (e.g., 0 to 999) or infinite scroll without limits. The API limits results to 50 items per request. Use proper pagination with reasonable page sizes (12-24 items per page).
 
-**Why it fails**: Without `locale`, Intelligent Search may return results in the wrong language or fail to apply locale-specific relevance rules. Multi-language stores will display mixed-language results, and search terms may not be properly tokenized for the target language.
+  ```typescript
+  // Proper pagination with bounded page sizes
+  const PAGE_SIZE = 24; // Reasonable default
+  const MAX_PAGE_SIZE = 50; // API maximum
 
-**Fix**: Always include the `locale` parameter in every Intelligent Search request.
+  function getSearchPage(query: string, page: number, locale: string) {
+    const safePageSize = Math.min(PAGE_SIZE, MAX_PAGE_SIZE);
+    const from = page * safePageSize;
+    const to = from + safePageSize - 1;
 
-```typescript
-// Always include locale in search parameters
-const params = new URLSearchParams({
-  query: "shoes",
-  locale: "en-US", // Required for correct language processing
-  from: "0",
-  to: "19",
-});
-```
+    return productSearch({ query, from, to, locale });
+  }
+  ```
 
----
+- **Rebuilding search ranking logic client-side**: Fetching results and then re-sorting or re-filtering them in the frontend discards Intelligent Search's ranking intelligence. Client-side filtering only works on the current page, not the full catalog. Use the API's `sort` parameter and facet paths.
 
-### Anti-Pattern: Loading All Products at Once
+  ```typescript
+  // Use API-level sorting — don't re-sort in the frontend
+  const results = await productSearch({
+    query: "shirt",
+    sort: "price:asc", // API handles sorting across entire result set
+    locale: "en-US",
+    from: 0,
+    to: 23,
+    facets: "category-1/clothing/color/red", // API handles filtering across entire catalog
+  });
+  ```
 
-**What happens**: Developers set very large `from`/`to` ranges (e.g., 0 to 999) or implement infinite scroll that loads all results without limit.
+## Review checklist
 
-**Why it fails**: The Intelligent Search API limits results to 50 items per request. Even if it allowed more, sending large payloads degrades performance for both the API and the client. Users experience long load times and high memory consumption. Additionally, loading products beyond what is visible wastes bandwidth.
-
-**Fix**: Use proper pagination with reasonable page sizes (12-24 items per page) and lazy-load subsequent pages only when the user scrolls or clicks "next page."
-
-```typescript
-// Proper pagination with bounded page sizes
-const PAGE_SIZE = 24; // Reasonable default
-const MAX_PAGE_SIZE = 50; // API maximum
-
-function getSearchPage(query: string, page: number, locale: string) {
-  const safePageSize = Math.min(PAGE_SIZE, MAX_PAGE_SIZE);
-  const from = page * safePageSize;
-  const to = from + safePageSize - 1;
-
-  return productSearch({ query, from, to, locale });
-}
-```
-
----
-
-### Anti-Pattern: Rebuilding Search Ranking Logic Client-Side
-
-**What happens**: Developers fetch search results and then re-sort or re-filter them in the frontend instead of using the API's built-in `sort` parameter and facet paths.
-
-**Why it fails**: Intelligent Search's ranking algorithm considers relevance, sales velocity, availability, and shopper behavior. Client-side re-sorting discards this intelligence. Additionally, client-side filtering only works on the current page of results, not the full catalog — a user filtering by "Red" would only see red items from the current 24 results, not from all matching products.
-
-**Fix**: Use the API's `sort` parameter and facet path for all filtering and sorting. Let the search engine do what it was designed to do.
-
-```typescript
-// Use API-level sorting — don't re-sort in the frontend
-const results = await productSearch({
-  query: "shirt",
-  sort: "price:asc", // API handles sorting across entire result set
-  locale: "en-US",
-  from: 0,
-  to: 23,
-  facets: "category-1/clothing/color/red", // API handles filtering across entire catalog
-});
-```
+- [ ] Is Intelligent Search called directly from the frontend (not unnecessarily routed through BFF)?
+- [ ] Does every search request include `from`, `to`, and `locale` parameters?
+- [ ] Are analytics events sent to `sp.vtex.com/event-api` after search results render?
+- [ ] Are click events sent when a user selects a product from search results?
+- [ ] Is sorting done via the API's `sort` parameter rather than client-side re-sorting?
+- [ ] Is filtering done via facet paths rather than client-side filtering?
+- [ ] Is autocomplete debounced to avoid excessive API calls?
+- [ ] Are page sizes bounded to ≤ 50 items per request?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Headless catalog and search](https://developers.vtex.com/docs/guides/headless-catalog) — Overview of catalog browsing and search in headless stores
 - [Intelligent Search API reference](https://developers.vtex.com/docs/api-reference/intelligent-search-api) — Complete API reference for all search endpoints
@@ -5146,47 +3644,27 @@ const results = await productSearch({
 
 # Catalog & SKU Integration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The complete SKU integration flow between an external seller and a VTEX marketplace, including catalog notifications, SKU suggestions, approval lifecycle, and price/inventory synchronization.
+Use this skill when building a seller connector that needs to push product catalog data into a VTEX marketplace, handle SKU approval workflows, or keep prices and inventory synchronized.
 
-**When to use it**: When building a seller connector that needs to push product catalog data into a VTEX marketplace, handle SKU approval workflows, or keep prices and inventory synchronized.
+- Building the Change Notification flow to register and update SKUs
+- Implementing the SKU suggestion lifecycle (send → pending → approved/denied)
+- Mapping product data to the VTEX catalog schema
+- Synchronizing prices and inventory via notification endpoints
 
-**What you'll learn**:
-- How to use the Change Notification endpoint to register and update SKUs
-- The SKU suggestion lifecycle (send → pending → approved/denied)
-- How to map product data to the VTEX catalog schema
-- How to synchronize prices and inventory via notification endpoints
+Do not use this skill for:
+- Marketplace-side catalog operations (direct Catalog API writes)
+- Order fulfillment or invoice handling (see `marketplace-fulfillment`)
+- Rate limiting patterns in isolation (see `marketplace-rate-limiting`)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
-
-### Concept 1: Change Notification Flow
-
-The `POST /api/catalog_system/pvt/skuseller/changenotification/{skuId}` endpoint is the entry point for all catalog integration. When called:
-- **200 OK** → The SKU already exists in the marketplace. The seller should update the SKU information.
-- **404 Not Found** → The SKU does not exist in the marketplace. The seller must send an SKU suggestion.
-
-This two-response pattern drives the entire integration: notify first, then either update or register based on the response.
-
-### Concept 2: SKU Suggestion Lifecycle
-
-The catalog is owned by the marketplace — the seller has no direct access. Every new SKU is sent as a **suggestion** via the `PUT Send SKU Suggestion` API. The lifecycle is:
-1. **Seller sends suggestion** with product name, SKU name, images, EAN, specifications
-2. **Suggestion enters "pending" state** in the marketplace's Received SKUs panel
-3. **Marketplace approves or denies** — approval creates an actual SKU in the catalog
-4. **Once approved**, the suggestion ceases to exist; the SKU can only be edited by the marketplace
-
-Suggestions can be updated by the seller only while still in pending state. Once approved or denied, updates require a new suggestion or direct marketplace action.
-
-### Concept 3: Price & Inventory Notifications
-
-Price and inventory changes use separate notification endpoints (not the catalog changenotification):
-- `POST /notificator/{sellerId}/changenotification/{skuId}/price` — notify price change
-- `POST /notificator/{sellerId}/changenotification/{skuId}/inventory` — notify inventory change
-
-After these notifications, the marketplace calls the seller's **Fulfillment Simulation** endpoint (`POST /pvt/orderForms/simulation`) to retrieve current data. This endpoint must respond within **2.5 seconds** or the product is considered unavailable.
+- Use `POST /api/catalog_system/pvt/skuseller/changenotification/{skuId}` as the entry point for all catalog integration. A **200 OK** means the SKU exists (update it); a **404 Not Found** means it does not (send a suggestion).
+- Use the `PUT Send SKU Suggestion` API to register new SKUs. The seller does not own the catalog — every new SKU must go through the suggestion/approval workflow.
+- Use separate notification endpoints for price and inventory changes (`/notificator/{sellerId}/changenotification/{skuId}/price` and `/inventory`), not the catalog changenotification.
+- After price/inventory notifications, the marketplace calls the seller's **Fulfillment Simulation** endpoint (`POST /pvt/orderForms/simulation`). This endpoint must respond within **2.5 seconds** or the product is considered unavailable.
+- Suggestions can only be updated while in "pending" state. Once approved or denied, the seller cannot modify them.
 
 **Architecture/Data Flow**:
 
@@ -5205,19 +3683,22 @@ Seller                          VTEX Marketplace
   │─── Response with price/stock ────▶│
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use SKU Integration API, Not Direct Catalog API
 
-**Rule**: External sellers MUST use the Change Notification + SKU Suggestion flow to integrate SKUs. Direct Catalog API writes (`POST /api/catalog/pvt/product` or `POST /api/catalog/pvt/stockkeepingunit`) are for marketplace-side operations only.
+External sellers MUST use the Change Notification + SKU Suggestion flow to integrate SKUs. Direct Catalog API writes (`POST /api/catalog/pvt/product` or `POST /api/catalog/pvt/stockkeepingunit`) are for marketplace-side operations only.
 
-**Why**: The seller does not own the catalog. Direct catalog writes will fail with 403 Forbidden or create orphaned entries that bypass the approval workflow. The suggestion mechanism ensures marketplace quality control.
+**Why this matters**
 
-**Detection**: If you see direct Catalog API calls for product/SKU creation (e.g., `POST /api/catalog/pvt/product`, `POST /api/catalog/pvt/stockkeepingunit`) from a seller integration → warn that the SKU Integration API should be used instead.
+The seller does not own the catalog. Direct catalog writes will fail with 403 Forbidden or create orphaned entries that bypass the approval workflow. The suggestion mechanism ensures marketplace quality control.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see direct Catalog API calls for product/SKU creation (e.g., `POST /api/catalog/pvt/product`, `POST /api/catalog/pvt/stockkeepingunit`) from a seller integration → warn that the SKU Integration API should be used instead.
+
+**Correct**
+
 ```typescript
 import axios, { AxiosInstance } from "axios";
 
@@ -5271,7 +3752,8 @@ async function integrateSellerSku(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Seller trying to write directly to marketplace catalog
 // This bypasses the suggestion/approval flow and will fail with 403
@@ -5293,13 +3775,18 @@ async function createSkuDirectly(
 
 ### Constraint: Handle Rate Limiting on Catalog Notifications
 
-**Rule**: All catalog notification calls MUST implement 429 handling with exponential backoff. Batch notifications MUST be throttled to respect VTEX API rate limits.
+All catalog notification calls MUST implement 429 handling with exponential backoff. Batch notifications MUST be throttled to respect VTEX API rate limits.
 
-**Why**: The Change Notification endpoint is rate-limited. Sending bulk notifications without throttling will trigger 429 responses and temporarily block the seller's API access, stalling the entire integration.
+**Why this matters**
 
-**Detection**: If you see catalog notification calls without 429 handling or retry logic → STOP and add rate limiting. If you see a tight loop sending notifications without delays → warn about rate limiting.
+The Change Notification endpoint is rate-limited. Sending bulk notifications without throttling will trigger 429 responses and temporarily block the seller's API access, stalling the entire integration.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see catalog notification calls without 429 handling or retry logic → STOP and add rate limiting. If you see a tight loop sending notifications without delays → warn about rate limiting.
+
+**Correct**
+
 ```typescript
 async function batchNotifySkus(
   client: AxiosInstance,
@@ -5364,7 +3851,8 @@ async function batchNotifySkus(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: No rate limiting, no error handling, tight loop
 async function notifyAllSkus(
@@ -5388,13 +3876,18 @@ async function notifyAllSkus(
 
 ### Constraint: Handle Suggestion Lifecycle States
 
-**Rule**: Sellers MUST check the suggestion state before attempting updates. Suggestions can only be updated while in pending state.
+Sellers MUST check the suggestion state before attempting updates. Suggestions can only be updated while in pending state.
 
-**Why**: Attempting to update an already-approved or denied suggestion will fail silently or create duplicate entries. An approved suggestion becomes an SKU owned by the marketplace.
+**Why this matters**
 
-**Detection**: If you see SKU suggestion updates without checking current suggestion status → warn about suggestion lifecycle handling.
+Attempting to update an already-approved or denied suggestion will fail silently or create duplicate entries. An approved suggestion becomes an SKU owned by the marketplace.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see SKU suggestion updates without checking current suggestion status → warn about suggestion lifecycle handling.
+
+**Correct**
+
 ```typescript
 async function updateSkuSuggestion(
   client: AxiosInstance,
@@ -5436,7 +3929,8 @@ async function updateSkuSuggestion(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Blindly sending suggestion update without checking state
 async function blindUpdateSuggestion(
@@ -5455,11 +3949,9 @@ async function blindUpdateSuggestion(
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement SKU catalog integration.**
-
-### Step 1: Set Up the Seller Connector Client
+### Set Up the Seller Connector Client
 
 Create an authenticated HTTP client for communicating with the VTEX marketplace.
 
@@ -5487,7 +3979,7 @@ function createMarketplaceClient(config: SellerConnectorConfig): AxiosInstance {
 }
 ```
 
-### Step 2: Implement the Change Notification Flow
+### Implement the Change Notification Flow
 
 Handle both the "exists" (200) and "new" (404) scenarios from the changenotification endpoint.
 
@@ -5530,7 +4022,7 @@ async function notifyAndSync(
 }
 ```
 
-### Step 3: Implement the Fulfillment Simulation Endpoint
+### Implement the Fulfillment Simulation Endpoint
 
 The marketplace calls this endpoint on the seller's side to retrieve current price and inventory data after a notification.
 
@@ -5609,7 +4101,7 @@ async function getSkuFromLocalCatalog(skuId: string): Promise<{
 }
 ```
 
-### Step 4: Notify Price and Inventory Changes
+### Notify Price and Inventory Changes
 
 Send separate notifications for price and inventory updates.
 
@@ -5723,54 +4215,11 @@ async function getLocalSkusNeedingSync(): Promise<
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Polling for suggestion status in tight loops.** Suggestion approval is a manual or semi-automatic marketplace process that can take minutes to days. Tight polling wastes API quota and may trigger rate limits that block the entire integration. Use a scheduled job (cron) to check suggestion statuses periodically (e.g., every 15-30 minutes), or implement a webhook-based notification system.
 
-### Anti-Pattern: Polling for Suggestion Status in Tight Loops
-
-**What happens**: Developers send a suggestion then immediately poll for approval status in a tight loop, waiting for the marketplace to approve.
-
-**Why it fails**: Suggestion approval is a manual or semi-automatic marketplace process that can take minutes to days. Tight polling wastes API quota and may trigger rate limits that block the entire integration.
-
-**Fix**: Use a scheduled job (cron) to check suggestion statuses periodically (e.g., every 15-30 minutes), or implement a webhook-based notification system.
-
-```typescript
-// Correct: Scheduled periodic check, not a tight poll
-async function checkPendingSuggestions(
-  client: AxiosInstance,
-  sellerId: string,
-  pendingSkuIds: string[]
-): Promise<Array<{ skuId: string; status: string }>> {
-  const results: Array<{ skuId: string; status: string }> = [];
-
-  for (const skuId of pendingSkuIds) {
-    try {
-      const response = await client.get(
-        `/api/catalog_system/pvt/sku/seller/${sellerId}/suggestion/${skuId}`
-      );
-      results.push({ skuId, status: response.data.Status });
-    } catch {
-      results.push({ skuId, status: "not_found" });
-    }
-
-    // Respect rate limits between checks
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-
-  return results;
-}
-```
-
----
-
-### Anti-Pattern: Ignoring Fulfillment Simulation Timeout
-
-**What happens**: The seller's fulfillment simulation endpoint performs complex database queries or external API calls that exceed the response time limit.
-
-**Why it fails**: VTEX marketplaces wait a maximum of **2.5 seconds** for a fulfillment simulation response. After that, the product is considered unavailable/inactive and won't appear in the storefront or checkout.
-
-**Fix**: Pre-cache price and inventory data. Use in-memory or Redis cache with event-driven updates so the simulation endpoint responds instantly.
+- **Ignoring the fulfillment simulation timeout.** The seller's fulfillment simulation endpoint performs complex database queries or external API calls that exceed the response time limit. VTEX marketplaces wait a maximum of **2.5 seconds** for a fulfillment simulation response. After that, the product is considered unavailable/inactive and won't appear in the storefront or checkout. Pre-cache price and inventory data using in-memory or Redis cache with event-driven updates so the simulation endpoint responds instantly.
 
 ```typescript
 import { RequestHandler } from "express";
@@ -5815,9 +4264,17 @@ const fastFulfillmentSimulation: RequestHandler = async (req, res) => {
 };
 ```
 
-## Reference
+## Review checklist
 
-**Links to VTEX documentation and related resources.**
+- [ ] Is the Change Notification + SKU Suggestion flow used (not direct Catalog API writes)?
+- [ ] Does the integration handle both 200 (exists) and 404 (new) responses from changenotification?
+- [ ] Are SKU suggestion updates guarded by a status check (only update while "Pending")?
+- [ ] Are batch catalog notifications throttled with 429 handling and exponential backoff?
+- [ ] Does the fulfillment simulation endpoint respond within **2.5 seconds**?
+- [ ] Are price and inventory notifications sent via the correct `/notificator/` endpoints?
+- [ ] Are placeholder values (account names, seller IDs, API keys) replaced with real values?
+
+## Reference
 
 - [External Seller Connector Guide](https://developers.vtex.com/docs/guides/external-seller-integration-connector) — Complete integration flow for external sellers connecting to VTEX marketplaces
 - [Change Notification API](https://developers.vtex.com/docs/api-reference/catalog-api#post-/api/catalog_system/pvt/skuseller/changenotification/-skuId-) — API reference for the changenotification endpoint
@@ -5830,61 +4287,29 @@ const fastFulfillmentSimulation: RequestHandler = async (req, res) => {
 
 # Fulfillment, Invoice & Tracking
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The complete seller-side fulfillment flow for VTEX marketplace orders, including authorize fulfillment handling, invoice notification, tracking code updates, and partial invoicing for split shipments.
+Use this skill when building a seller integration that needs to send invoice data and tracking information to a VTEX marketplace after fulfilling an order.
 
-**When to use it**: When building a seller integration that needs to send invoice data and tracking information to a VTEX marketplace after fulfilling an order.
+- Handling the Authorize Fulfillment callback from the marketplace
+- Sending invoice notifications via `POST /api/oms/pvt/orders/{orderId}/invoice`
+- Updating tracking information via `PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}`
+- Implementing partial invoicing for split shipments
 
-**What you'll learn**:
-- How to handle the Authorize Fulfillment callback from the marketplace
-- How to send invoice notifications via `POST /api/oms/pvt/orders/{orderId}/invoice`
-- The required invoice payload fields and correct formatting
-- How to update tracking information and handle partial invoicing
+Do not use this skill for:
+- Catalog or SKU synchronization (see `marketplace-catalog-sync`)
+- Order event consumption via Feed/Hook (see `marketplace-order-hook`)
+- General API rate limiting (see `marketplace-rate-limiting`)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
-
-### Concept 1: Fulfillment Authorization Flow
-
-After payment is approved, the VTEX marketplace sends an **Authorize Fulfillment** request to the seller's endpoint (`POST /pvt/orders/{sellerOrderId}/fulfill`). This signals that the seller can begin the fulfillment process.
-
-The request body contains only the `marketplaceOrderId`. The seller must:
-1. Map the `marketplaceOrderId` to their internal order
-2. Begin picking, packing, and shipping
-3. Once ready, send the invoice notification back to the marketplace
-
-### Concept 2: Invoice Notification Endpoint
-
-The seller sends invoice data to the marketplace using:
-`POST /api/oms/pvt/orders/{orderId}/invoice`
-
-Required fields in the request body:
-- `type` — `"Output"` for sales invoices (shipment), `"Input"` for return invoices
-- `invoiceNumber` — Unique invoice identifier
-- `invoiceValue` — Total value in cents (e.g., 9990 = $99.90)
-- `issuanceDate` — ISO 8601 date string when the invoice was issued
-- `invoiceUrl` — URL to the invoice document (optional but recommended)
-- `invoiceKey` — NFe access key (required in Brazil, optional elsewhere)
-- `items` — Array of items with `id`, `quantity`, and `price`
-
-After receiving invoice information, the order status changes to **invoiced**. At this point, the order can no longer be canceled (unless a return invoice is sent first).
-
-### Concept 3: Tracking Updates
-
-Tracking information uses the **same invoice endpoint** but is sent separately:
-`POST /api/oms/pvt/orders/{orderId}/invoice`
-
-The tracking fields are:
-- `courier` — Carrier name
-- `trackingNumber` — Tracking identifier from the carrier
-- `trackingUrl` — URL for tracking the shipment
-
-For updating tracking on an existing invoice, use:
-`PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}`
-
-This endpoint is used to add the tracking number after the invoice has been sent, or to update delivery status with `isDelivered: true`.
+- After payment is approved, the VTEX marketplace sends an **Authorize Fulfillment** request to the seller's endpoint (`POST /pvt/orders/{sellerOrderId}/fulfill`). Only begin fulfillment after receiving this callback.
+- Send invoices via `POST /api/oms/pvt/orders/{orderId}/invoice`. Required fields: `type`, `invoiceNumber`, `invoiceValue` (in cents), `issuanceDate`, and `items` array.
+- Use `type: "Output"` for sales invoices (shipment) and `type: "Input"` for return invoices.
+- Send tracking information **separately** after the carrier provides it, using `PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}`. Do not hardcode placeholder tracking values in the initial invoice.
+- For split shipments, send **one invoice per package** with only the items in that package. Each `invoiceValue` must reflect only its items.
+- Once an order is invoiced, it cannot be canceled without first sending a return invoice (`type: "Input"`).
+- The fulfillment simulation endpoint must respond within **2.5 seconds** or the product is considered unavailable.
 
 **Architecture/Data Flow**:
 
@@ -5904,19 +4329,22 @@ VTEX Marketplace                    External Seller
        │    (status → delivered)           │
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Send Correct Invoice Format with All Required Fields
 
-**Rule**: The invoice notification MUST include `type`, `invoiceNumber`, `invoiceValue`, `issuanceDate`, and `items` array. The `invoiceValue` MUST be in cents. The `items` array MUST match the items in the order.
+The invoice notification MUST include `type`, `invoiceNumber`, `invoiceValue`, `issuanceDate`, and `items` array. The `invoiceValue` MUST be in cents. The `items` array MUST match the items in the order.
 
-**Why**: Missing required fields cause the API to reject the invoice with 400 Bad Request, leaving the order stuck in "handling" status. Incorrect `invoiceValue` (e.g., using dollars instead of cents) causes financial discrepancies in marketplace reconciliation.
+**Why this matters**
 
-**Detection**: If you see an invoice notification payload missing `invoiceNumber`, `invoiceValue`, `issuanceDate`, or `items` → warn about missing required fields. If `invoiceValue` appears to be in dollars (e.g., `99.90` instead of `9990`) → warn about cents conversion.
+Missing required fields cause the API to reject the invoice with 400 Bad Request, leaving the order stuck in "handling" status. Incorrect `invoiceValue` (e.g., using dollars instead of cents) causes financial discrepancies in marketplace reconciliation.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see an invoice notification payload missing `invoiceNumber`, `invoiceValue`, `issuanceDate`, or `items` → warn about missing required fields. If `invoiceValue` appears to be in dollars (e.g., `99.90` instead of `9990`) → warn about cents conversion.
+
+**Correct**
+
 ```typescript
 import axios, { AxiosInstance } from "axios";
 
@@ -5986,7 +4414,8 @@ async function invoiceOrder(client: AxiosInstance, orderId: string): Promise<voi
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Missing required fields, value in dollars instead of cents
 async function sendBrokenInvoice(
@@ -6007,13 +4436,18 @@ async function sendBrokenInvoice(
 
 ### Constraint: Update Tracking Promptly After Shipping
 
-**Rule**: Tracking information MUST be sent as soon as the carrier provides it. Use `PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}` to add tracking to an existing invoice.
+Tracking information MUST be sent as soon as the carrier provides it. Use `PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}` to add tracking to an existing invoice.
 
-**Why**: Late tracking updates prevent customers from seeing shipment status in the marketplace. The order remains in "invoiced" state instead of progressing to "delivering" and then "delivered". This generates customer support tickets and damages seller reputation.
+**Why this matters**
 
-**Detection**: If you see tracking information being batched for daily updates instead of sent in real-time → warn about prompt tracking updates. If tracking is included in the initial invoice call but the carrier hasn't provided it yet (hardcoded/empty values) → warn.
+Late tracking updates prevent customers from seeing shipment status in the marketplace. The order remains in "invoiced" state instead of progressing to "delivering" and then "delivered". This generates customer support tickets and damages seller reputation.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see tracking information being batched for daily updates instead of sent in real-time → warn about prompt tracking updates. If tracking is included in the initial invoice call but the carrier hasn't provided it yet (hardcoded/empty values) → warn.
+
+**Correct**
+
 ```typescript
 interface TrackingUpdate {
   courier: string;
@@ -6064,7 +4498,8 @@ async function onDeliveryConfirmed(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Sending empty/fake tracking data with the invoice
 async function invoiceWithFakeTracking(
@@ -6090,13 +4525,18 @@ async function invoiceWithFakeTracking(
 
 ### Constraint: Handle Partial Invoicing for Split Shipments
 
-**Rule**: For orders shipped in multiple packages, each shipment MUST have its own invoice with only the items included in that package. The `invoiceValue` MUST reflect only the items in that particular shipment.
+For orders shipped in multiple packages, each shipment MUST have its own invoice with only the items included in that package. The `invoiceValue` MUST reflect only the items in that particular shipment.
 
-**Why**: Sending a single invoice for the full order value when only partial items are shipped causes financial discrepancies. The marketplace cannot reconcile payments correctly, and the order status may not progress properly.
+**Why this matters**
 
-**Detection**: If you see a single invoice being sent with the full order value for partial shipments → warn about partial invoicing. If the items array doesn't match the actual items being shipped → warn.
+Sending a single invoice for the full order value when only partial items are shipped causes financial discrepancies. The marketplace cannot reconcile payments correctly, and the order status may not progress properly.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see a single invoice being sent with the full order value for partial shipments → warn about partial invoicing. If the items array doesn't match the actual items being shipped → warn.
+
+**Correct**
+
 ```typescript
 interface OrderItem {
   id: string;
@@ -6159,7 +4599,8 @@ await sendPartialInvoices(client, "ORD-123", [
 ]);
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Sending full order value for partial shipment
 async function wrongPartialInvoice(
@@ -6183,11 +4624,9 @@ async function wrongPartialInvoice(
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement fulfillment, invoicing, and tracking.**
-
-### Step 1: Implement the Authorize Fulfillment Endpoint
+### Implement the Authorize Fulfillment Endpoint
 
 The marketplace calls this endpoint when payment is approved.
 
@@ -6247,7 +4686,7 @@ app.use(express.json());
 app.post("/pvt/orders/:sellerOrderId/fulfill", authorizeFulfillmentHandler);
 ```
 
-### Step 2: Send Invoice After Fulfillment
+### Send Invoice After Fulfillment
 
 Once the order is packed and the invoice is generated, send the invoice notification.
 
@@ -6300,7 +4739,7 @@ async function generateInvoice(order: OrderMapping): Promise<{
 }
 ```
 
-### Step 3: Send Tracking When Carrier Picks Up
+### Send Tracking When Carrier Picks Up
 
 ```typescript
 async function handleCarrierPickup(
@@ -6321,7 +4760,7 @@ async function handleCarrierPickup(
 }
 ```
 
-### Step 4: Confirm Delivery
+### Confirm Delivery
 
 ```typescript
 async function handleDeliveryConfirmation(
@@ -6416,43 +4855,11 @@ async function waitForDeliveryConfirmation(
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Sending invoice before fulfillment authorization.** The seller sends an invoice notification immediately when the order is placed, before receiving the Authorize Fulfillment callback from the marketplace. Payment may still be pending or under review. Invoicing before authorization can result in the invoice being rejected or the order being in an inconsistent state. Only send the invoice after receiving `POST /pvt/orders/{sellerOrderId}/fulfill`.
 
-### Anti-Pattern: Sending Invoice Before Fulfillment Authorization
-
-**What happens**: The seller sends an invoice notification immediately when the order is placed, before receiving the Authorize Fulfillment callback from the marketplace.
-
-**Why it fails**: The order hasn't been authorized for fulfillment yet — payment may still be pending or under review. Invoicing before authorization can result in the invoice being rejected or the order being in an inconsistent state.
-
-**Fix**: Only send the invoice after receiving the Authorize Fulfillment callback (`POST /pvt/orders/{sellerOrderId}/fulfill`).
-
-```typescript
-// Correct: Wait for fulfillment authorization before invoicing
-async function onFulfillmentAuthorized(
-  client: AxiosInstance,
-  sellerOrderId: string,
-  marketplaceOrderId: string
-): Promise<void> {
-  // Now it's safe to begin fulfillment and send invoice
-  const order = orderStore.get(sellerOrderId);
-  if (!order) return;
-
-  order.marketplaceOrderId = marketplaceOrderId;
-  await fulfillAndInvoice(client, order);
-}
-```
-
----
-
-### Anti-Pattern: Not Handling Return Invoices for Cancellation
-
-**What happens**: A seller tries to cancel an invoiced order by calling the Cancel Order endpoint directly without first sending a return invoice.
-
-**Why it fails**: Once an order is in "invoiced" status, it cannot be canceled without a return invoice (`type: "Input"`). The Cancel Order API will reject the request.
-
-**Fix**: Send a return invoice first, then request cancellation.
+- **Not handling return invoices for cancellation.** A seller tries to cancel an invoiced order by calling the Cancel Order endpoint directly without first sending a return invoice. Once an order is in "invoiced" status, it cannot be canceled without a return invoice (`type: "Input"`). The Cancel Order API will reject the request.
 
 ```typescript
 // Correct: Send return invoice before canceling an invoiced order
@@ -6479,9 +4886,19 @@ async function cancelInvoicedOrder(
 }
 ```
 
-## Reference
+- **Fulfillment simulation exceeding the 2.5-second timeout.** The seller's fulfillment simulation endpoint performs complex database queries or external API calls that exceed the response time limit. VTEX marketplaces wait a maximum of **2.5 seconds** for a fulfillment simulation response. After that, the product is considered unavailable/inactive and won't appear in the storefront or checkout. Pre-cache price and inventory data.
 
-**Links to VTEX documentation and related resources.**
+## Review checklist
+
+- [ ] Does the seller only begin fulfillment after receiving the Authorize Fulfillment callback?
+- [ ] Does the invoice payload include all required fields (`type`, `invoiceNumber`, `invoiceValue`, `issuanceDate`, `items`)?
+- [ ] Is `invoiceValue` in cents (not dollars)?
+- [ ] Is tracking sent separately after the carrier provides real data (not hardcoded placeholders)?
+- [ ] For split shipments, does each invoice cover only its package's items and value?
+- [ ] Is cancellation of invoiced orders handled via return invoice (`type: "Input"`) first?
+- [ ] Does the fulfillment simulation endpoint respond within **2.5 seconds**?
+
+## Reference
 
 - [External Seller Connector - Order Invoicing](https://developers.vtex.com/docs/guides/external-seller-integration-connector#order-invoicing) — Seller-side invoicing flow in the integration guide
 - [Order Invoice Notification API](https://developers.vtex.com/docs/api-reference/orders-api#post-/api/oms/pvt/orders/-orderId-/invoice) — API reference for sending invoice data
@@ -6494,30 +4911,30 @@ async function cancelInvoicedOrder(
 
 # Order Integration & Webhooks
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: VTEX order Feed v3 and Hook configuration for marketplace integrations, including webhook setup, order status lifecycle, payload structure, authentication validation, and idempotent event processing.
+Use this skill when building an integration that needs to react to order status changes in a VTEX marketplace — such as syncing orders to an ERP, triggering fulfillment workflows, or sending notifications to external systems.
 
-**When to use it**: When building an integration that needs to react to order status changes in a VTEX marketplace — such as syncing orders to an ERP, triggering fulfillment workflows, or sending notifications to external systems.
+- Configuring Feed v3 or Hook for order updates
+- Choosing between Feed (pull) and Hook (push) delivery models
+- Validating webhook authentication and processing events idempotently
+- Handling the complete order status lifecycle
 
-**What you'll learn**:
-- How to configure Feed v3 and Hook for order updates
-- The difference between Feed (pull) and Hook (push) and when to use each
-- How to validate webhook authentication and process events idempotently
-- How to handle the complete order status lifecycle
+Do not use this skill for:
+- Catalog or SKU synchronization (see `marketplace-catalog-sync`)
+- Invoice and tracking submission (see `marketplace-fulfillment`)
+- General API rate limiting (see `marketplace-rate-limiting`)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Use **Hook (push)** for high-performance middleware that needs real-time order updates. Your endpoint must respond with HTTP 200 within 5000ms.
+- Use **Feed (pull)** for ERPs or systems with limited throughput where you control the consumption pace. Events persist in a queue until committed.
+- Use **Feed as a backup** alongside Hook to catch events missed during downtime.
+- Use **FromWorkflow** filter when you only need to react to order status changes (simpler, most common).
+- Use **FromOrders** filter when you need to filter by any order property using JSONata expressions (e.g., by sales channel).
+- The two filter types are **mutually exclusive**. Using both in the same configuration request returns `409 Conflict`.
+- Each appKey can configure only one feed and one hook. Different users sharing the same appKey access the same feed/hook.
 
-### Concept 1: Feed vs. Hook
-
-VTEX provides two mechanisms for consuming order updates:
-
-- **Feed (pull model)**: A queue of order update events. Your integration periodically calls `GET /api/orders/feed` to retrieve events, processes them, then commits them via `POST /api/orders/feed`. You control the pace.
-- **Hook (push model)**: VTEX sends order update events to your endpoint via POST whenever an event matches your filter. Your endpoint must respond with HTTP 200 within 5000ms.
-
-Key differences:
 | | Feed | Hook |
 |---|---|---|
 | Model | Pull (active) | Push (reactive) |
@@ -6525,38 +4942,7 @@ Key differences:
 | Reliability | Events persist in queue | Must be always available |
 | Best for | ERPs with limited throughput | High-performance middleware |
 
-Each appKey can configure only one feed and one hook. Different users sharing the same appKey access the same feed/hook.
-
-### Concept 2: Filter Types
-
-Both Feed and Hook support two filter types:
-
-**FromWorkflow** — Filter by order status changes only:
-```json
-{
-  "filter": {
-    "type": "FromWorkflow",
-    "status": ["ready-for-handling", "handling", "invoiced", "cancel"]
-  }
-}
-```
-
-**FromOrders** — Filter by any order property using JSONata expressions:
-```json
-{
-  "filter": {
-    "type": "FromOrders",
-    "expression": "status = \"ready-for-handling\" and salesChannel = \"2\"",
-    "disableSingleFire": false
-  }
-}
-```
-
-The two filter types are mutually exclusive. Using both in the same configuration request returns `409 Conflict`.
-
-### Concept 3: Hook Notification Payload
-
-When a Hook fires, VTEX sends a POST to your endpoint with this structure:
+**Hook Notification Payload**:
 
 ```json
 {
@@ -6587,19 +4973,22 @@ VTEX OMS                           Your Integration
    │◀── HTTP 200 ─────────────────────────│  (Must respond within 5000ms)
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Validate Webhook Authentication
 
-**Rule**: Your hook endpoint MUST validate the authentication headers sent by VTEX before processing any event. The `Origin.Account` and `Origin.Key` fields in the payload must match your expected values.
+Your hook endpoint MUST validate the authentication headers sent by VTEX before processing any event. The `Origin.Account` and `Origin.Key` fields in the payload must match your expected values.
 
-**Why**: Without auth validation, any actor can send fake order events to your endpoint, triggering unauthorized fulfillment actions, data corruption, or financial losses.
+**Why this matters**
 
-**Detection**: If you see a hook endpoint handler that processes events without checking `Origin.Account`, `Origin.Key`, or custom headers → STOP and add authentication validation.
+Without auth validation, any actor can send fake order events to your endpoint, triggering unauthorized fulfillment actions, data corruption, or financial losses.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see a hook endpoint handler that processes events without checking `Origin.Account`, `Origin.Key`, or custom headers → STOP and add authentication validation.
+
+**Correct**
+
 ```typescript
 import { RequestHandler } from "express";
 
@@ -6662,7 +5051,8 @@ async function processOrderEvent(payload: HookPayload): Promise<void> {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: No authentication validation — accepts events from anyone
 const unsafeHookHandler: RequestHandler = async (req, res) => {
@@ -6679,13 +5069,18 @@ const unsafeHookHandler: RequestHandler = async (req, res) => {
 
 ### Constraint: Process Events Idempotently
 
-**Rule**: Your integration MUST process order events idempotently. Use the combination of `OrderId` + `State` + `LastChange` as a deduplication key to prevent duplicate processing.
+Your integration MUST process order events idempotently. Use the combination of `OrderId` + `State` + `LastChange` as a deduplication key to prevent duplicate processing.
 
-**Why**: VTEX may deliver the same hook notification multiple times (at-least-once delivery). Without idempotency, duplicate processing can result in double fulfillment, duplicate invoices, or inconsistent state.
+**Why this matters**
 
-**Detection**: If you see an order event handler without an `orderId` duplicate check or deduplication mechanism → warn about idempotency. If the handler directly mutates state without checking if the event was already processed → warn.
+VTEX may deliver the same hook notification multiple times (at-least-once delivery). Without idempotency, duplicate processing can result in double fulfillment, duplicate invoices, or inconsistent state.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see an order event handler without an `orderId` duplicate check or deduplication mechanism → warn about idempotency. If the handler directly mutates state without checking if the event was already processed → warn.
+
+**Correct**
+
 ```typescript
 interface ProcessedEvent {
   orderId: string;
@@ -6764,7 +5159,8 @@ async function cancelOrderInERP(orderId: string): Promise<void> {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: No deduplication — processes every event even if already handled
 async function processWithoutIdempotency(payload: HookPayload): Promise<void> {
@@ -6794,13 +5190,18 @@ const database = {
 
 ### Constraint: Handle All Order Statuses
 
-**Rule**: Your integration MUST handle all possible order statuses, including `Status Null`. Unrecognized statuses must be logged but not crash the integration.
+Your integration MUST handle all possible order statuses, including `Status Null`. Unrecognized statuses must be logged but not crash the integration.
 
-**Why**: VTEX documents warn that `Status Null` may be unidentified and end up being mapped as another status, potentially leading to errors. Missing a status in your handler can cause orders to get stuck or lost.
+**Why this matters**
 
-**Detection**: If you see a status handler that only covers 2-3 statuses without a default/fallback case → warn about incomplete status handling.
+VTEX documents warn that `Status Null` may be unidentified and end up being mapped as another status, potentially leading to errors. Missing a status in your handler can cause orders to get stuck or lost.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see a status handler that only covers 2-3 statuses without a default/fallback case → warn about incomplete status handling.
+
+**Correct**
+
 ```typescript
 type OrderStatus =
   | "order-created"
@@ -6886,7 +5287,8 @@ async function logUnhandledStatus(orderId: string, state: string): Promise<void>
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Only handles 2 statuses, no fallback for unknown statuses
 async function incompleteHandler(orderId: string, state: string): Promise<void> {
@@ -6901,11 +5303,9 @@ async function incompleteHandler(orderId: string, state: string): Promise<void> 
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement order integration.**
-
-### Step 1: Configure the Hook
+### Configure the Hook
 
 Set up the hook with appropriate filters and your endpoint URL.
 
@@ -6967,7 +5367,7 @@ await configureOrderHook({
 });
 ```
 
-### Step 2: Build the Hook Endpoint with Auth and Idempotency
+### Build the Hook Endpoint with Auth and Idempotency
 
 ```typescript
 import express from "express";
@@ -6985,10 +5385,10 @@ const hookConfig: HookConfig = {
 app.post("/vtex/order-hook", createHookHandler(hookConfig));
 
 // The createHookHandler and idempotentProcessEvent functions
-// from the Constraints section above handle auth + deduplication
+// from the Hard constraints section above handle auth + deduplication
 ```
 
-### Step 3: Fetch Full Order Data and Process
+### Fetch Full Order Data and Process
 
 After receiving the hook notification, fetch the complete order data for processing.
 
@@ -7075,7 +5475,7 @@ async function cancelFulfillmentTask(orderId: string): Promise<void> {
 }
 ```
 
-### Step 4: Implement Feed as Fallback
+### Implement Feed as Fallback
 
 Use Feed v3 as a backup to catch any events the hook might miss during downtime.
 
@@ -7193,51 +5593,11 @@ app.listen(3000, () => {
 });
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Using List Orders API instead of Feed/Hook.** The `GET /api/oms/pvt/orders` endpoint depends on indexing, which can lag behind real-time updates. It's slower, less reliable, and more likely to hit rate limits when polled frequently. Feed v3 runs before indexing and doesn't depend on it. Use Feed v3 or Hook for order change detection; use List Orders only for ad-hoc queries.
 
-### Anti-Pattern: Using List Orders API Instead of Feed/Hook
-
-**What happens**: Developers poll `GET /api/oms/pvt/orders` with status filters to detect order changes instead of using Feed v3 or Hook.
-
-**Why it fails**: The List Orders API depends on indexing, which can lag behind real-time updates. It's slower, less reliable, and more likely to hit rate limits when polled frequently. Feed v3 runs before indexing and doesn't depend on it.
-
-**Fix**: Migrate to Feed v3 or Hook for order change detection. Use List Orders only for ad-hoc queries.
-
-```typescript
-// Correct: Use Feed v3 to consume order updates
-async function consumeOrderFeed(client: AxiosInstance): Promise<void> {
-  const response = await client.get("/api/orders/feed");
-  const events = response.data;
-
-  for (const event of events) {
-    await processOrderEvent({
-      Domain: "Marketplace",
-      OrderId: event.orderId,
-      State: event.state,
-      LastChange: event.lastChange,
-      Origin: { Account: "", Key: "" },
-    });
-  }
-
-  // Commit processed events
-  const handles = events.map((e: { handle: string }) => e.handle);
-  if (handles.length > 0) {
-    await client.post("/api/orders/feed", { handles });
-  }
-}
-```
-
----
-
-### Anti-Pattern: Blocking Hook Response with Long Processing
-
-**What happens**: The hook endpoint performs all order processing synchronously before responding to VTEX.
-
-**Why it fails**: VTEX requires the hook endpoint to respond with HTTP 200 within **5000ms**. If processing takes longer (e.g., ERP sync, complex database writes), VTEX considers the delivery failed and retries with increasing delays. Repeated failures can lead to hook deactivation.
-
-**Fix**: Acknowledge the event immediately, then process asynchronously via a queue.
+- **Blocking hook response with long processing.** VTEX requires the hook endpoint to respond with HTTP 200 within **5000ms**. If processing takes longer (e.g., ERP sync, complex database writes), VTEX considers the delivery failed and retries with increasing delays. Repeated failures can lead to hook deactivation. Acknowledge the event immediately, then process asynchronously via a queue.
 
 ```typescript
 import { RequestHandler } from "express";
@@ -7275,9 +5635,17 @@ async function enqueueOrderEvent(payload: HookPayload): Promise<void> {
 }
 ```
 
-## Reference
+## Review checklist
 
-**Links to VTEX documentation and related resources.**
+- [ ] Is the correct delivery model chosen (Feed for controlled throughput, Hook for real-time)?
+- [ ] Does the hook endpoint validate `Origin.Account`, `Origin.Key`, and custom headers?
+- [ ] Is event processing idempotent using `OrderId` + `State` + `LastChange` as deduplication key?
+- [ ] Does the status handler cover all order statuses with a default/fallback case?
+- [ ] Does the hook endpoint respond within **5000ms** (using async processing for heavy work)?
+- [ ] Is Feed v3 configured as a backup to catch missed hook events?
+- [ ] Are filter types not mixed (FromWorkflow and FromOrders are mutually exclusive)?
+
+## Reference
 
 - [Feed v3 Guide](https://developers.vtex.com/docs/guides/orders-feed) — Complete guide to Feed and Hook configuration, filter types, and best practices
 - [Orders API - Feed v3 Endpoints](https://developers.vtex.com/docs/api-reference/orders-api#get-/api/orders/feed) — API reference for feed retrieval and commit
@@ -7290,57 +5658,40 @@ async function enqueueOrderEvent(payload: HookPayload): Promise<void> {
 
 # API Rate Limiting & Resilience
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: VTEX API rate limiting mechanics, response headers for rate limit awareness, and resilience patterns including exponential backoff with jitter, circuit breakers, and request queuing for marketplace integrations.
+Use this skill when building any integration that calls VTEX APIs — catalog sync, order processing, price/inventory updates, or fulfillment operations — and needs to handle rate limits gracefully without losing data or degrading performance.
 
-**When to use it**: When building any integration that calls VTEX APIs — catalog sync, order processing, price/inventory updates, or fulfillment operations — and needs to handle rate limits gracefully without losing data or degrading performance.
+- Implementing retry logic with exponential backoff and jitter
+- Reading and reacting to VTEX rate limit headers (`Retry-After`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`)
+- Building circuit breakers for high-throughput integrations
+- Controlling request throughput with queuing
 
-**What you'll learn**:
-- How VTEX rate limits work, including burst credits and per-route limits
-- How to read and react to rate limit headers (`Retry-After`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`)
-- How to implement exponential backoff with jitter to avoid thundering herd problems
-- How to build circuit breakers and request queues for high-throughput integrations
+Do not use this skill for:
+- Catalog-specific synchronization logic (see `marketplace-catalog-sync`)
+- Order event consumption and processing (see `marketplace-order-hook`)
+- Invoice and tracking submission (see `marketplace-fulfillment`)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Always implement **exponential backoff with jitter** on 429 responses. Formula: `delay = min(maxDelay, baseDelay * 2^attempt) * (0.5 + random(0, 0.5))`.
+- Always **read the `Retry-After` header** on 429 responses. Use the greater of the `Retry-After` value and the calculated backoff delay.
+- Use a **circuit breaker** when a service consistently fails (e.g., after 5 consecutive failures), to prevent cascading failures and give the service time to recover.
+- Use a **request queue** to control throughput and avoid bursts that trigger rate limits.
+- Monitor `X-RateLimit-Remaining` **proactively** on successful responses and slow down before hitting 429.
+- VTEX rate limits vary by API:
+  - **Pricing API**: PUT/POST: 40 requests/second/account with 1000 burst credits. DELETE: 16 requests/second/account with 300 burst credits.
+  - **Catalog API**: Varies by endpoint; no published fixed limits.
+  - **Orders API**: Subject to general platform limits; VTEX recommends 1-minute backoff on 429.
+- **Burst Credits**: When you exceed the rate limit, excess requests consume burst credits (1 credit per excess request). When burst credits reach 0, the request is blocked with 429. Credits refill over time at the same rate as the route's limit when the route is not being used.
 
-### Concept 1: VTEX Rate Limit Mechanics
-
-VTEX enforces rate limits per route per account. When limits are exceeded:
-- **429 Too Many Requests** — Your request was rejected. The response includes a `Retry-After` header (in seconds) indicating when to retry.
-- **503 Service Unavailable** — A circuit breaker was activated because the target service received too many errors. Requests are temporarily blocked to let the service recover.
-
-Rate limits vary by API:
-- **Pricing API**: PUT/POST routes: 40 requests/second/account with 1000 burst credits. DELETE: 16 requests/second/account with 300 burst credits.
-- **Catalog API**: Varies by endpoint; no published fixed limits.
-- **Orders API**: Subject to general platform limits; VTEX recommends 1-minute backoff on 429.
-
-**Burst Credits**: When you exceed the rate limit, excess requests consume burst credits (1 credit per excess request). When burst credits reach 0, the request is blocked with 429. Credits refill over time at the same rate as the route's limit when the route is not being used.
-
-### Concept 2: Rate Limit Response Headers
-
-VTEX APIs return these headers to help your integration manage request rates:
+**Rate Limit Response Headers**:
 
 | Header | Description |
 |---|---|
 | `Retry-After` | Seconds to wait before retrying (present on 429 responses) |
 | `X-RateLimit-Remaining` | Number of requests remaining in the current window |
 | `X-RateLimit-Reset` | Timestamp (seconds) when the rate limit window resets |
-
-Always read `Retry-After` on 429 responses. Using a fixed retry interval instead ignores the server's guidance and may cause prolonged blocking.
-
-### Concept 3: Exponential Backoff with Jitter
-
-Exponential backoff increases the wait time between retries exponentially (e.g., 1s, 2s, 4s, 8s). **Jitter** adds randomness to prevent the "thundering herd" problem where many clients retry at the same time after a rate limit window resets.
-
-The formula: `delay = min(maxDelay, baseDelay * 2^attempt) * (0.5 + random(0, 0.5))`
-
-This ensures:
-- Failed requests are retried with increasing delays
-- Multiple clients don't retry simultaneously
-- The delay is bounded by a maximum to prevent excessively long waits
 
 **Architecture/Data Flow**:
 
@@ -7360,19 +5711,22 @@ Your Integration                          VTEX API
       │◀── 200 OK ─────────────────────────│  (success)
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Implement Exponential Backoff on 429 Responses
 
-**Rule**: When receiving a 429 response, the integration MUST wait before retrying using exponential backoff with jitter. The wait time MUST respect the `Retry-After` header when present.
+When receiving a 429 response, the integration MUST wait before retrying using exponential backoff with jitter. The wait time MUST respect the `Retry-After` header when present.
 
-**Why**: Immediate retries after a 429 will be rejected again and consume burst credits faster, leading to prolonged blocking. Without jitter, all clients retry simultaneously after the window resets, causing another rate limit spike (thundering herd).
+**Why this matters**
 
-**Detection**: If you see immediate retry on 429 (no delay, no backoff) → STOP and implement exponential backoff. If you see retry logic without reading the `Retry-After` header → warn that the header should be respected. If you see `while(true)` retry loops or `setInterval` with intervals less than 5 seconds → warn about tight loops.
+Immediate retries after a 429 will be rejected again and consume burst credits faster, leading to prolonged blocking. Without jitter, all clients retry simultaneously after the window resets, causing another rate limit spike (thundering herd).
 
-✅ **CORRECT**:
+**Detection**
+
+If you see immediate retry on 429 (no delay, no backoff) → STOP and implement exponential backoff. If you see retry logic without reading the `Retry-After` header → warn that the header should be respected. If you see `while(true)` retry loops or `setInterval` with intervals less than 5 seconds → warn about tight loops.
+
+**Correct**
+
 ```typescript
 import axios, { AxiosInstance, AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 
@@ -7467,7 +5821,8 @@ async function requestWithRetry<T>(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Immediate retry without backoff or Retry-After respect
 async function retryImmediately<T>(
@@ -7494,13 +5849,18 @@ async function retryImmediately<T>(
 
 ### Constraint: Respect the Retry-After Header
 
-**Rule**: When a 429 response includes a `Retry-After` header, the integration MUST wait at least the specified number of seconds before retrying. The backoff delay should be the maximum of the calculated backoff and the `Retry-After` value.
+When a 429 response includes a `Retry-After` header, the integration MUST wait at least the specified number of seconds before retrying. The backoff delay should be the maximum of the calculated backoff and the `Retry-After` value.
 
-**Why**: The `Retry-After` header is the server's explicit instruction on when it will accept requests again. Ignoring it results in requests being rejected until the specified time has passed, wasting bandwidth and potentially extending the block period.
+**Why this matters**
 
-**Detection**: If you see retry logic that does not read or use the `Retry-After` header value → warn that the header should be checked. If the retry delay is always a fixed value regardless of the header → warn.
+The `Retry-After` header is the server's explicit instruction on when it will accept requests again. Ignoring it results in requests being rejected until the specified time has passed, wasting bandwidth and potentially extending the block period.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see retry logic that does not read or use the `Retry-After` header value → warn that the header should be checked. If the retry delay is always a fixed value regardless of the header → warn.
+
+**Correct**
+
 ```typescript
 function getRetryDelayMs(error: AxiosError, attempt: number): number {
   const retryAfterHeader = error.response?.headers?.["retry-after"];
@@ -7526,7 +5886,8 @@ function getRetryDelayMs(error: AxiosError, attempt: number): number {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Fixed 1-second retry ignoring Retry-After header
 async function fixedRetry<T>(
@@ -7550,13 +5911,18 @@ async function fixedRetry<T>(
 
 ### Constraint: No Tight Retry Loops
 
-**Rule**: Integrations MUST NOT use `while(true)` loops for retrying or `setInterval`/`setTimeout` with intervals less than 5 seconds for polling VTEX APIs.
+Integrations MUST NOT use `while(true)` loops for retrying or `setInterval`/`setTimeout` with intervals less than 5 seconds for polling VTEX APIs.
 
-**Why**: Tight loops generate excessive requests that quickly exhaust rate limits, degrade VTEX platform performance for all users, and can make the VTEX Admin unavailable for the account. VTEX explicitly warns that excessive 429 errors can make Admin unavailable.
+**Why this matters**
 
-**Detection**: If you see `while(true)` or `for(;;)` retry patterns without adequate delays → warn about tight loops. If you see `setInterval` with intervals less than 5000ms for API calls → warn about polling frequency.
+Tight loops generate excessive requests that quickly exhaust rate limits, degrade VTEX platform performance for all users, and can make the VTEX Admin unavailable for the account. VTEX explicitly warns that excessive 429 errors can make Admin unavailable.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `while(true)` or `for(;;)` retry patterns without adequate delays → warn about tight loops. If you see `setInterval` with intervals less than 5000ms for API calls → warn about polling frequency.
+
+**Correct**
+
 ```typescript
 // Correct: Controlled polling with adequate intervals
 async function pollWithBackpressure(
@@ -7605,7 +5971,8 @@ async function commitEvents(client: AxiosInstance, handles: string[]): Promise<v
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Tight loop with no backpressure
 async function tightLoop(client: AxiosInstance): Promise<void> {
@@ -7632,11 +5999,9 @@ function createClient(): AxiosInstance {
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement rate-limit-aware VTEX API calls.**
-
-### Step 1: Create a Rate-Limit-Aware HTTP Client
+### Create a Rate-Limit-Aware HTTP Client
 
 Wrap your HTTP client with automatic retry logic.
 
@@ -7680,7 +6045,7 @@ function createRateLimitedClient(config: RateLimitedClientConfig): {
 }
 ```
 
-### Step 2: Implement a Circuit Breaker
+### Implement a Circuit Breaker
 
 Prevent cascading failures when a service is consistently failing.
 
@@ -7756,7 +6121,7 @@ class CircuitBreaker {
 }
 ```
 
-### Step 3: Implement a Request Queue
+### Implement a Request Queue
 
 Queue requests to control throughput and avoid bursts.
 
@@ -7832,7 +6197,7 @@ class RequestQueue {
 }
 ```
 
-### Step 4: Monitor Rate Limit Headers Proactively
+### Monitor Rate Limit Headers Proactively
 
 Read rate limit headers to slow down before hitting 429.
 
@@ -7931,17 +6296,9 @@ async function buildResilientIntegration(): Promise<void> {
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Fixed Retry Delay Without Jitter
-
-**What happens**: Developers implement retry logic with a fixed delay (e.g., always wait 5 seconds) instead of exponential backoff with jitter.
-
-**Why it fails**: When multiple integration instances are rate-limited simultaneously, they all retry at the same time (5 seconds later), creating another burst that triggers rate limiting again. This "thundering herd" pattern can persist indefinitely.
-
-**Fix**: Use exponential backoff with random jitter so retries are spread across time.
+- **Fixed retry delay without jitter.** Using a fixed delay (e.g., always 5 seconds) instead of exponential backoff with jitter causes the "thundering herd" problem: all rate-limited clients retry simultaneously, creating another burst that triggers rate limiting again. Use exponential backoff with random jitter so retries are spread across time.
 
 ```typescript
 // Correct: Exponential backoff with jitter
@@ -7961,15 +6318,7 @@ function getRetryDelay(attempt: number): number {
 // attempt 4: ~8000-16000ms
 ```
 
----
-
-### Anti-Pattern: No Proactive Rate Management
-
-**What happens**: Developers only handle 429 errors reactively (after being rate limited) instead of monitoring rate limit headers to slow down proactively.
-
-**Why it fails**: By the time you receive a 429, you've already lost burst credits. Proactive monitoring of `X-RateLimit-Remaining` allows you to reduce request rate before hitting the limit, maintaining consistent throughput.
-
-**Fix**: Read rate limit headers on successful responses and adjust request pacing when remaining quota is low.
+- **No proactive rate management.** Only handling 429 errors reactively (after being rate limited) instead of monitoring rate limit headers to slow down proactively. By the time you receive a 429, you've already lost burst credits. Monitor `X-RateLimit-Remaining` on successful responses and reduce request rate when remaining quota is low.
 
 ```typescript
 // Correct: Proactive rate management
@@ -7999,9 +6348,17 @@ async function proactiveRateManagement(
 }
 ```
 
-## Reference
+## Review checklist
 
-**Links to VTEX documentation and related resources.**
+- [ ] Is exponential backoff with jitter implemented for 429 responses?
+- [ ] Is the `Retry-After` header read and respected on 429 responses?
+- [ ] Are there no tight retry loops (`while(true)`, `setInterval` < 5 seconds)?
+- [ ] Is a circuit breaker in place for consistently failing services?
+- [ ] Are `X-RateLimit-Remaining` headers monitored proactively to slow down before hitting limits?
+- [ ] Are the correct numeric thresholds used (maxRetries: 5, baseDelayMs: 1000, maxDelayMs: 60000)?
+- [ ] Are Pricing API limits respected (40 req/s PUT/POST, 16 req/s DELETE, burst credits)?
+
+## Reference
 
 - [Best Practices for Avoiding Rate Limit Errors](https://developers.vtex.com/docs/guides/best-practices-for-avoiding-rate-limit-errors) — Official VTEX guide on rate limit management and best practices
 - [Handling Errors and Exceptions](https://developers.vtex.com/docs/guides/handling-errors-and-exceptions) — VTEX guide on error handling including 429 and 5xx responses
@@ -8016,74 +6373,42 @@ async function proactiveRateManagement(
 
 # Asynchronous Payment Flows & Callbacks
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The complete asynchronous payment authorization flow in the VTEX Payment Provider Protocol. This includes returning `undefined` status for pending payments, using the `callbackUrl` to notify the Gateway of final status, handling the difference between notification callbacks (non-VTEX IO) and retry callbacks (VTEX IO), and managing the 7-day retry window.
+Use this skill when:
+- Implementing a payment connector that supports Boleto Bancário, Pix, bank transfers, or redirect-based flows
+- Working with any payment method where the acquirer does not return a final status synchronously
+- Handling `callbackUrl` notification or retry flows
+- Managing the Gateway's 7-day automatic retry cycle for `undefined` status payments
 
-**When to use it**: When implementing a payment connector that supports any asynchronous payment method — Boleto Bancário, Pix, bank transfers, redirect-based flows, or any method where the acquirer does not return a final status synchronously.
+Do not use this skill for:
+- PPP endpoint contracts and response shapes — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
+- `paymentId`/`requestId` idempotency and state machine logic — use [`payment-idempotency`](../payment-idempotency/skill.md)
+- PCI compliance and Secure Proxy card handling — use [`payment-pci-security`](../payment-pci-security/skill.md)
 
-**What you'll learn**:
-- When and how to return `undefined` status from Create Payment
-- How the `callbackUrl` notification and retry flows work
-- How to validate `X-VTEX-signature` on callback URLs
-- How to handle the Gateway's automatic 7-day retry cycle
+## Decision rules
 
-## Key Concepts
+- If the acquirer cannot return a final status synchronously, the payment method is async — return `status: "undefined"`.
+- Common async methods: Boleto Bancário (`BankInvoice`), Pix, bank transfers, redirect-based auth.
+- Common sync methods: credit cards, debit cards with instant authorization.
+- **Without VTEX IO**: the `callbackUrl` is a notification endpoint — POST the updated status with `X-VTEX-API-AppKey`/`X-VTEX-API-AppToken` headers.
+- **With VTEX IO**: the `callbackUrl` is a retry endpoint — POST to it (no payload) to trigger the Gateway to re-call POST `/payments`.
+- Always preserve the `X-VTEX-signature` query parameter in the `callbackUrl` — never strip or modify it.
+- Set `delayToCancel` to 604800 (7 days) for async methods to match the Gateway's retry window.
 
-**Essential knowledge before implementation**:
+## Hard constraints
 
-### Concept 1: The `undefined` Status
+### Constraint: MUST return `undefined` for async payment methods
 
-When a payment cannot be resolved immediately (the acquirer needs time, the customer must complete an action), the connector returns `status: "undefined"` in the Create Payment response. This tells the Gateway the payment is pending — not failed, not approved. The Gateway will then wait and retry until a final status (`approved` or `denied`) is received.
+For any payment method where authorization does not complete synchronously (Boleto, Pix, bank transfer, redirect-based auth), the Create Payment response MUST use `status: "undefined"`. The connector MUST NOT return `"approved"` or `"denied"` until the payment is actually confirmed or rejected by the acquirer.
 
-### Concept 2: Callback URL — Two Flows
+**Why this matters**
+Returning `"approved"` for an unconfirmed payment tells the Gateway the money has been collected. The order is released for fulfillment immediately. If the customer never actually pays (e.g., never scans the Pix QR code), the merchant ships products without payment. Returning `"denied"` prematurely cancels a payment that might still be completed.
 
-The `callbackUrl` is provided in the Create Payment request body. Its behavior depends on the hosting model:
+**Detection**
+If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect), STOP. Async methods must return `"undefined"` and resolve via callback.
 
-- **Without VTEX IO** (partner infrastructure): The `callbackUrl` is a **notification endpoint**. The provider POSTs the updated status directly to this URL with `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers.
-- **With VTEX IO**: The `callbackUrl` is a **retry endpoint**. The provider calls this URL (no payload required) to trigger the Gateway to re-call the Create Payment (`/payments`) endpoint. The Gateway then receives the updated status from the provider's response.
-
-Both flows require the `X-VTEX-signature` query parameter to be preserved when calling the callback URL.
-
-### Concept 3: The 7-Day Retry Window
-
-If a payment remains in `undefined` status, the VTEX Gateway automatically retries the Create Payment endpoint periodically for up to 7 days. During this window, the connector must be prepared to receive repeated Create Payment calls with the same `paymentId`. When the payment is finally resolved, the connector returns the final status. If still `undefined` after 7 days, the payment is automatically cancelled.
-
-### Concept 4: X-VTEX-signature
-
-The `callbackUrl` includes a query parameter `X-VTEX-signature`. This is a mandatory authentication token that identifies the transaction. When calling the callback URL, the provider must use the URL exactly as received (including all query parameters) to ensure the Gateway can authenticate the callback.
-
-**Architecture/Data Flow (Non-VTEX IO)**:
-
-```text
-1. Gateway → POST /payments → Connector (returns status: "undefined")
-2. Acquirer webhook → Connector (payment confirmed)
-3. Connector → POST callbackUrl (with X-VTEX-API-AppKey/AppToken headers)
-4. Gateway updates payment status to approved/denied
-```
-
-**Architecture/Data Flow (VTEX IO)**:
-
-```text
-1. Gateway → POST /payments → Connector (returns status: "undefined")
-2. Acquirer webhook → Connector (payment confirmed)
-3. Connector → POST callbackUrl (retry, no payload)
-4. Gateway → POST /payments → Connector (returns status: "approved"/"denied")
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: MUST Return `undefined` for Async Payment Methods
-
-**Rule**: For any payment method where authorization does not complete synchronously (Boleto, Pix, bank transfer, redirect-based auth), the Create Payment response MUST use `status: "undefined"`. The connector MUST NOT return `"approved"` or `"denied"` until the payment is actually confirmed or rejected by the acquirer.
-
-**Why**: Returning `"approved"` for an unconfirmed payment tells the Gateway the money has been collected. The order is released for fulfillment immediately. If the customer never actually pays (e.g., never scans the Pix QR code), the merchant ships products without payment. Returning `"denied"` prematurely cancels a payment that might still be completed by the customer.
-
-**Detection**: If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect), STOP. Async methods must return `"undefined"` and resolve via callback.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod, callbackUrl } = req.body;
@@ -8129,7 +6454,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod } = req.body;
@@ -8154,17 +6479,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST use callbackUrl from request — never hardcode
 
-### Constraint: MUST Use callbackUrl from Request — Never Hardcode
+The connector MUST use the exact `callbackUrl` provided in the Create Payment request body, including all query parameters (`X-VTEX-signature`, etc.). The connector MUST NOT hardcode callback URLs or construct them manually.
 
-**Rule**: The connector MUST use the exact `callbackUrl` provided in the Create Payment request body, including all query parameters (`X-VTEX-signature`, etc.). The connector MUST NOT hardcode callback URLs or construct them manually.
+**Why this matters**
+The `callbackUrl` contains transaction-specific authentication tokens (`X-VTEX-signature`) that the Gateway uses to validate the callback. A hardcoded or modified URL will be rejected by the Gateway, leaving the payment stuck in `undefined` status forever. The URL format may also change between environments (production vs sandbox).
 
-**Why**: The `callbackUrl` contains transaction-specific authentication tokens (`X-VTEX-signature`) that the Gateway uses to validate the callback. A hardcoded or modified URL will be rejected by the Gateway, leaving the payment stuck in `undefined` status forever. The URL format may also change between environments (production vs sandbox).
+**Detection**
+If the connector hardcodes a callback URL string, constructs the URL manually, or strips query parameters from the `callbackUrl`, warn the developer. The `callbackUrl` must be stored and used exactly as received.
 
-**Detection**: If the connector hardcodes a callback URL string, constructs the URL manually, or strips query parameters from the `callbackUrl`, warn the developer. The `callbackUrl` must be stored and used exactly as received.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, callbackUrl } = req.body;
@@ -8206,7 +6531,7 @@ async function handleAcquirerWebhook(req: Request, res: Response): Promise<void>
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // WRONG: Hardcoding callback URL — ignores X-VTEX-signature and environment
 async function handleAcquirerWebhook(req: Request, res: Response): Promise<void> {
@@ -8227,17 +6552,17 @@ async function handleAcquirerWebhook(req: Request, res: Response): Promise<void>
 }
 ```
 
----
+### Constraint: MUST be ready for repeated Create Payment calls
 
-### Constraint: MUST Be Ready for Repeated Create Payment Calls
+The connector MUST handle the Gateway calling Create Payment with the same `paymentId` multiple times during the 7-day retry window. Each call must return the current payment status (which may have been updated via callback since the last call).
 
-**Rule**: The connector MUST handle the Gateway calling Create Payment with the same `paymentId` multiple times during the 7-day retry window. Each call must return the current payment status (which may have been updated via callback since the last call).
+**Why this matters**
+The Gateway retries `undefined` payments automatically. If the connector treats each call as a new payment, it will create duplicate charges. If the connector always returns the original `undefined` status without checking for updates, the Gateway never learns that the payment was approved, and eventually cancels it.
 
-**Why**: The Gateway retries `undefined` payments automatically. If the connector treats each call as a new payment, it will create duplicate charges. If the connector always returns the original `undefined` status without checking for updates, the Gateway never learns that the payment was approved, and eventually cancels it.
+**Detection**
+If the Create Payment handler does not check for an existing `paymentId` and return the latest status, STOP. The handler must support idempotent retries that reflect the current state.
 
-**Detection**: If the Create Payment handler does not check for an existing `paymentId` and return the latest status, STOP. The handler must support idempotent retries that reflect the current state.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -8258,7 +6583,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -8276,13 +6601,27 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Data flow for non-VTEX IO (notification callback):
 
-### Step 1: Classify Payment Methods as Sync or Async
+```text
+1. Gateway → POST /payments → Connector (returns status: "undefined")
+2. Acquirer webhook → Connector (payment confirmed)
+3. Connector → POST callbackUrl (with X-VTEX-API-AppKey/AppToken headers)
+4. Gateway updates payment status to approved/denied
+```
 
-Determine which payment methods require async handling at the start of the Create Payment flow.
+Data flow for VTEX IO (retry callback):
+
+```text
+1. Gateway → POST /payments → Connector (returns status: "undefined")
+2. Acquirer webhook → Connector (payment confirmed)
+3. Connector → POST callbackUrl (retry, no payload)
+4. Gateway → POST /payments → Connector (returns status: "approved"/"denied")
+```
+
+Classify payment methods:
 
 ```typescript
 const ASYNC_PAYMENT_METHODS = new Set([
@@ -8295,128 +6634,10 @@ function isAsyncPaymentMethod(paymentMethod: string): boolean {
 }
 ```
 
-### Step 2: Implement Async Create Payment with callbackUrl Storage
-
-Return `undefined` and store the `callbackUrl` for later use.
+Acquirer webhook handler with callback notification (non-VTEX IO):
 
 ```typescript
-async function createPaymentHandler(req: Request, res: Response): Promise<void> {
-  const { paymentId, paymentMethod, callbackUrl } = req.body;
-
-  // Idempotency check — return latest status if payment exists
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json({
-      ...existing.response,
-      status: existing.status,
-    });
-    return;
-  }
-
-  if (isAsyncPaymentMethod(paymentMethod)) {
-    const pending = await acquirer.initiateAsync(req.body);
-
-    const response = {
-      paymentId,
-      status: "undefined" as const,
-      authorizationId: pending.authorizationId ?? null,
-      nsu: pending.nsu ?? null,
-      tid: pending.tid ?? null,
-      acquirer: "MyProvider",
-      code: "ASYNC-PENDING",
-      message: "Awaiting payment confirmation",
-      delayToAutoSettle: 21600,
-      delayToAutoSettleAfterAntifraud: 1800,
-      delayToCancel: 604800,
-      paymentUrl: pending.paymentUrl ?? undefined,
-    };
-
-    await store.save(paymentId, {
-      paymentId,
-      status: "undefined",
-      callbackUrl,
-      acquirerRef: pending.reference,
-      response,
-    });
-
-    res.status(200).json(response);
-    return;
-  }
-
-  // Sync flow — process and return final status
-  const result = await acquirer.authorizeSync(req.body);
-  const response = {
-    paymentId,
-    status: result.approved ? "approved" : "denied",
-    authorizationId: result.authorizationId ?? null,
-    nsu: result.nsu ?? null,
-    tid: result.tid ?? null,
-    acquirer: "MyProvider",
-    code: result.code ?? null,
-    message: result.message ?? null,
-    delayToAutoSettle: 21600,
-    delayToAutoSettleAfterAntifraud: 1800,
-    delayToCancel: 21600,
-  };
-
-  await store.save(paymentId, {
-    paymentId,
-    status: response.status,
-    response,
-  });
-
-  res.status(200).json(response);
-}
-```
-
-### Step 3: Implement the Acquirer Webhook Handler with Callback Notification
-
-When the acquirer confirms the payment, update local state and notify the Gateway.
-
-```typescript
-// Non-VTEX IO: Use notification callback
 async function handleAcquirerWebhook(req: Request, res: Response): Promise<void> {
-  const webhookData = req.body;
-  const acquirerRef = webhookData.transactionId;
-  const acquirerStatus = webhookData.status; // "paid", "expired", "failed"
-
-  const payment = await store.findByAcquirerRef(acquirerRef);
-  if (!payment || !payment.callbackUrl) {
-    res.status(404).json({ error: "Payment not found" });
-    return;
-  }
-
-  // Map acquirer status to PPP status
-  const pppStatus = acquirerStatus === "paid" ? "approved" : "denied";
-
-  // Update local state FIRST
-  await store.updateStatus(payment.paymentId, pppStatus);
-
-  // Notify the Gateway via callbackUrl — use it exactly as stored
-  try {
-    await fetch(payment.callbackUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-VTEX-API-AppKey": process.env.VTEX_APP_KEY!,
-        "X-VTEX-API-AppToken": process.env.VTEX_APP_TOKEN!,
-      },
-      body: JSON.stringify({
-        paymentId: payment.paymentId,
-        status: pppStatus,
-      }),
-    });
-  } catch (error) {
-    // Log the error but don't fail — the Gateway will also retry via /payments
-    console.error(`Callback failed for ${payment.paymentId}:`, error);
-    // The Gateway's 7-day retry on /payments acts as a safety net
-  }
-
-  res.status(200).json({ received: true });
-}
-
-// For VTEX IO: Use retry callback (no payload needed)
-async function handleAcquirerWebhookVtexIO(req: Request, res: Response): Promise<void> {
   const webhookData = req.body;
   const acquirerRef = webhookData.transactionId;
 
@@ -8427,157 +6648,21 @@ async function handleAcquirerWebhookVtexIO(req: Request, res: Response): Promise
   }
 
   const pppStatus = webhookData.status === "paid" ? "approved" : "denied";
+
+  // Update local state FIRST
   await store.updateStatus(payment.paymentId, pppStatus);
 
-  // VTEX IO: Just call the retry URL — Gateway will re-call POST /payments
-  try {
-    await fetch(payment.callbackUrl, { method: "POST" });
-  } catch (error) {
-    console.error(`Retry callback failed for ${payment.paymentId}:`, error);
-  }
+  // Notify the Gateway via callbackUrl with retry logic
+  await notifyGateway(payment.callbackUrl, {
+    paymentId: payment.paymentId,
+    status: pppStatus,
+  });
 
   res.status(200).json({ received: true });
 }
 ```
 
-### Complete Example
-
-Full async payment flow with webhook and callback:
-
-```typescript
-import express, { Request, Response } from "express";
-
-const app = express();
-app.use(express.json());
-
-const ASYNC_METHODS = new Set(["BankInvoice", "Pix"]);
-
-// Create Payment — supports both sync and async methods
-app.post("/payments", async (req: Request, res: Response) => {
-  const { paymentId, paymentMethod, callbackUrl } = req.body;
-
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json({ ...existing.response, status: existing.status });
-    return;
-  }
-
-  if (ASYNC_METHODS.has(paymentMethod)) {
-    const pending = await acquirer.initiateAsync(req.body);
-    const response = buildAsyncResponse(paymentId, pending);
-    await store.save(paymentId, {
-      paymentId, status: "undefined", callbackUrl,
-      acquirerRef: pending.reference, response,
-    });
-    res.status(200).json(response);
-  } else {
-    const result = await acquirer.authorizeSync(req.body);
-    const response = buildSyncResponse(paymentId, result);
-    await store.save(paymentId, { paymentId, status: response.status, response });
-    res.status(200).json(response);
-  }
-});
-
-// Acquirer Webhook — receives payment confirmation, notifies Gateway
-app.post("/webhooks/acquirer", async (req: Request, res: Response) => {
-  const { transactionId, status: acquirerStatus } = req.body;
-  const payment = await store.findByAcquirerRef(transactionId);
-  if (!payment) { res.status(404).send(); return; }
-
-  const pppStatus = acquirerStatus === "paid" ? "approved" : "denied";
-  await store.updateStatus(payment.paymentId, pppStatus);
-
-  if (payment.callbackUrl) {
-    try {
-      await fetch(payment.callbackUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-VTEX-API-AppKey": process.env.VTEX_APP_KEY!,
-          "X-VTEX-API-AppToken": process.env.VTEX_APP_TOKEN!,
-        },
-        body: JSON.stringify({ paymentId: payment.paymentId, status: pppStatus }),
-      });
-    } catch (err) {
-      console.error("Callback failed, Gateway will retry via /payments", err);
-    }
-  }
-
-  res.status(200).send();
-});
-
-app.listen(443);
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Synchronous Approval of Async Payments
-
-**What happens**: The connector receives a Pix or Boleto Create Payment request and immediately returns `status: "approved"` because the QR code or slip was generated successfully.
-
-**Why it fails**: Generating a QR code or Boleto slip is not the same as receiving payment. The customer still needs to scan/pay. Returning `"approved"` triggers order fulfillment before payment is confirmed. The merchant ships products and never receives payment.
-
-**Fix**: Always return `"undefined"` for async methods and wait for acquirer confirmation:
-
-```typescript
-if (ASYNC_METHODS.has(paymentMethod)) {
-  const pending = await acquirer.initiateAsync(req.body);
-  res.status(200).json({
-    paymentId,
-    status: "undefined",  // Never "approved" for async
-    // ...
-    paymentUrl: pending.qrCodeUrl,  // Customer scans this to pay
-  });
-}
-```
-
----
-
-### Anti-Pattern: Ignoring the callbackUrl
-
-**What happens**: The connector does not store the `callbackUrl` from the Create Payment request and relies entirely on the Gateway's automatic retries to detect payment completion.
-
-**Why it fails**: The Gateway's retry interval increases over time. Without callback notification, there can be a long delay between the customer paying and the order being approved. This creates a poor customer experience and increases support tickets. In worst cases, the 7-day window expires and the payment is cancelled even though the customer paid.
-
-**Fix**: Always store and use the `callbackUrl`:
-
-```typescript
-// Store the callbackUrl when creating the payment
-await store.save(paymentId, {
-  paymentId,
-  status: "undefined",
-  callbackUrl: req.body.callbackUrl,  // Store this!
-  acquirerRef: pending.reference,
-});
-
-// Use it when the acquirer confirms payment
-async function onAcquirerConfirmation(paymentId: string): Promise<void> {
-  const payment = await store.findByPaymentId(paymentId);
-  if (payment?.callbackUrl) {
-    await fetch(payment.callbackUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-VTEX-API-AppKey": process.env.VTEX_APP_KEY!,
-        "X-VTEX-API-AppToken": process.env.VTEX_APP_TOKEN!,
-      },
-      body: JSON.stringify({ paymentId, status: "approved" }),
-    });
-  }
-}
-```
-
----
-
-### Anti-Pattern: No Retry Logic for Failed Callbacks
-
-**What happens**: The connector calls the `callbackUrl` once, and if the request fails (network error, timeout, 5xx), it silently drops the notification.
-
-**Why it fails**: If the callback fails and the connector doesn't retry, the Gateway never learns the payment was approved. The payment sits in `undefined` until the Gateway's next retry of Create Payment, which may be hours away. In the worst case, the payment is auto-cancelled after 7 days.
-
-**Fix**: Implement retry logic with exponential backoff for callback failures:
+Callback retry with exponential backoff:
 
 ```typescript
 async function notifyGateway(callbackUrl: string, payload: object): Promise<void> {
@@ -8597,7 +6682,6 @@ async function notifyGateway(callbackUrl: string, payload: object): Promise<void
       });
 
       if (response.ok) return;
-
       console.error(`Callback attempt ${attempt + 1} failed: ${response.status}`);
     } catch (error) {
       console.error(`Callback attempt ${attempt + 1} error:`, error);
@@ -8613,9 +6697,32 @@ async function notifyGateway(callbackUrl: string, payload: object): Promise<void
 }
 ```
 
-## Reference
+## Common failure modes
 
-**Links to VTEX documentation and related resources.**
+- **Synchronous approval of async payments** — Returning `status: "approved"` for Pix or Boleto because the QR code or slip was generated successfully. Generating a QR code is not the same as receiving payment. The order ships without money collected.
+- **Ignoring the callbackUrl** — Not storing the `callbackUrl` from the Create Payment request and relying entirely on the Gateway's automatic retries. The retry interval increases over time, causing long delays between payment and order approval. Worst case: the 7-day window expires and the payment is cancelled even though the customer paid.
+- **Hardcoding callback URLs** — Constructing callback URLs manually instead of using the one from the request, stripping the `X-VTEX-signature` parameter. The Gateway rejects the callback and the payment stays stuck in `undefined`.
+- **No retry logic for failed callbacks** — Calling the `callbackUrl` once and silently dropping the notification on failure. The Gateway never learns the payment was approved, and the payment sits in `undefined` until the next retry or is auto-cancelled.
+- **Returning stale status on retries** — Always returning the original `undefined` response without checking if the status was updated via callback. The Gateway never sees the `approved` status and eventually cancels the payment.
+
+## Review checklist
+
+- [ ] Do async payment methods (Boleto, Pix) return `status: "undefined"` in Create Payment?
+- [ ] Is the `callbackUrl` stored exactly as received from the request (including all query params)?
+- [ ] Does the webhook handler update local state before calling the `callbackUrl`?
+- [ ] Is `X-VTEX-signature` preserved in the `callbackUrl` when calling it?
+- [ ] Are `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers included in notification callbacks (non-VTEX IO)?
+- [ ] Is there retry logic with exponential backoff for failed callback calls?
+- [ ] Does the Create Payment handler return the latest status (not stale) on Gateway retries?
+- [ ] Is `delayToCancel` set to 604800 (7 days) for async methods?
+
+## Related skills
+
+- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
+- [`payment-idempotency`](../payment-idempotency/skill.md) — `paymentId`/`requestId` idempotency and state machine
+- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance and Secure Proxy
+
+## Reference
 
 - [Payment Provider Protocol (Help Center)](https://help.vtex.com/en/docs/tutorials/payment-provider-protocol) — Detailed explanation of the `undefined` status, callback URL notification and retry flows, and the 7-day retry window
 - [Purchase Flows](https://developers.vtex.com/docs/guides/payments-integration-purchase-flows) — Authorization flow documentation including async retry mechanics and callback URL behavior for VTEX IO vs non-VTEX IO
@@ -8628,59 +6735,41 @@ async function notifyGateway(callbackUrl: string, payload: object): Promise<void
 
 # Idempotency & Duplicate Prevention
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Idempotency patterns for VTEX Payment Provider Protocol connectors. This includes using `paymentId` as the primary idempotency key for Create Payment, using `requestId` for Cancel/Capture/Refund operations, implementing a payment state machine, and handling Gateway retries that can occur for up to 7 days on `undefined` status payments.
+Use this skill when:
+- Implementing any PPP endpoint handler that processes payments, cancellations, captures, or refunds
+- Ensuring repeated Gateway calls with the same identifiers produce identical results without re-processing
+- Building a payment state machine to prevent invalid transitions (e.g., capturing a cancelled payment)
+- Handling the Gateway's 7-day retry window for `undefined` status payments
 
-**When to use it**: When implementing any PPP endpoint handler that processes payments, cancellations, captures, or refunds. Use this skill whenever you need to ensure that repeated Gateway calls with the same identifiers produce identical results without re-processing.
+Do not use this skill for:
+- PPP endpoint response shapes and HTTP methods — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
+- Async callback URL notification logic — use [`payment-async-flow`](../payment-async-flow/skill.md)
+- PCI compliance and Secure Proxy — use [`payment-pci-security`](../payment-pci-security/skill.md)
 
-**What you'll learn**:
-- How `paymentId` and `requestId` function as idempotency keys across different endpoints
-- How to build a state machine that prevents invalid transitions
-- How to store and return cached responses for duplicate requests
-- Why the Gateway retries `undefined` payments for up to 7 days
+## Decision rules
 
-## Key Concepts
+- Use `paymentId` as the idempotency key for Create Payment — every call with the same `paymentId` must return the same result.
+- Use `requestId` as the idempotency key for Cancel, Capture, and Refund operations.
+- If the Gateway sends a second Create Payment with the same `paymentId`, return the stored response without calling the acquirer again.
+- Async payment methods (Boleto, Pix) MUST return `status: "undefined"` — never `"approved"` until the acquirer confirms.
+- A payment moves through defined states: `undefined` → `approved` → `settled`, or `undefined` → `denied`, or `approved` → `cancelled`. Enforce valid transitions only.
+- Use a persistent data store (PostgreSQL, DynamoDB, VBase for VTEX IO) — never in-memory storage that is lost on restart.
 
-**Essential knowledge before implementation**:
+## Hard constraints
 
-### Concept 1: paymentId as Idempotency Key
+### Constraint: MUST use paymentId as idempotency key for Create Payment
 
-Every Create Payment request from the VTEX Gateway includes a unique `paymentId`. This identifier is the canonical idempotency key for the payment lifecycle. If the Gateway sends a second Create Payment request with the same `paymentId`, the connector MUST return the exact same response as the first call without creating a new transaction at the acquirer. The Gateway retries Create Payment calls with `undefined` status for up to 7 days.
+The connector MUST check for an existing record with the given `paymentId` before processing a new payment. If a record exists, return the stored response without calling the acquirer again.
 
-### Concept 2: requestId for Operation Idempotency
+**Why this matters**
+The VTEX Gateway retries Create Payment requests with `undefined` status for up to 7 days. Without idempotency on `paymentId`, each retry creates a new charge at the acquirer, resulting in duplicate charges to the customer. This is a financial loss and a critical production incident.
 
-Cancel, Capture, and Refund requests include a `requestId` field that ensures operational idempotency. The cancellation flow can be retried for an entire day. Each `requestId` represents a single logical operation — if the connector receives the same `requestId` again, it must return the previously computed result without re-executing the operation at the acquirer.
+**Detection**
+If the Create Payment handler does not check for an existing `paymentId` before processing, STOP. The handler must query the data store for the `paymentId` first.
 
-### Concept 3: Payment State Machine
-
-A payment moves through defined states: `undefined` → `approved` → `settled` or `undefined` → `denied` or `approved` → `cancelled`. The connector must enforce valid transitions. An `approved` payment cannot be approved again; a `cancelled` payment cannot be captured. The state machine prevents double-charging and ensures idempotent behavior.
-
-**Architecture/Data Flow**:
-
-```text
-Gateway sends POST /payments (paymentId=ABC)
-  → Connector checks store: paymentId=ABC exists?
-    → YES: return stored response (no acquirer call)
-    → NO: process with acquirer, store result, return response
-
-Gateway retries POST /payments (paymentId=ABC) [up to 7 days if undefined]
-  → Connector finds paymentId=ABC in store → returns stored response
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: MUST Use paymentId as Idempotency Key for Create Payment
-
-**Rule**: The connector MUST check for an existing record with the given `paymentId` before processing a new payment. If a record exists, return the stored response without calling the acquirer again.
-
-**Why**: The VTEX Gateway retries Create Payment requests with `undefined` status for up to 7 days. Without idempotency on `paymentId`, each retry creates a new charge at the acquirer, resulting in duplicate charges to the customer. This is a financial loss and a critical production incident.
-
-**Detection**: If the Create Payment handler does not check for an existing `paymentId` before processing, STOP. The handler must query the data store for the `paymentId` first.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -8717,7 +6806,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -8743,17 +6832,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST return identical response for duplicate requests
 
-### Constraint: MUST Return Identical Response for Duplicate Requests
+When the connector receives a Create Payment request with a `paymentId` that already exists in the data store, it MUST return the exact stored response. It MUST NOT create a new record, generate new identifiers, or re-process the payment.
 
-**Rule**: When the connector receives a Create Payment request with a `paymentId` that already exists in the data store, it MUST return the exact stored response. It MUST NOT create a new record, generate new identifiers, or re-process the payment.
+**Why this matters**
+The Gateway uses the response fields (`authorizationId`, `tid`, `nsu`, `status`) to track the transaction. If a retry returns different values, the Gateway loses track of the original transaction, causing reconciliation failures and potential double settlements.
 
-**Why**: The Gateway uses the response fields (`authorizationId`, `tid`, `nsu`, `status`) to track the transaction. If a retry returns different values, the Gateway loses track of the original transaction, causing reconciliation failures and potential double settlements.
+**Detection**
+If the handler creates a new database record or generates new identifiers when it finds an existing `paymentId`, STOP. The handler must return the previously stored response verbatim.
 
-**Detection**: If the handler creates a new database record or generates new identifiers when it finds an existing `paymentId`, STOP. The handler must return the previously stored response verbatim.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -8769,7 +6858,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -8791,17 +6880,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST NOT approve async payments synchronously
 
-### Constraint: MUST NOT Approve Async Payments Synchronously
+If a payment method is asynchronous (e.g., Boleto, Pix, bank redirect), the Create Payment response MUST return `status: "undefined"`. It MUST NOT return `status: "approved"` or `status: "denied"` until the payment is actually confirmed or rejected by the acquirer.
 
-**Rule**: If a payment method is asynchronous (e.g., Boleto, Pix, bank redirect), the Create Payment response MUST return `status: "undefined"`. It MUST NOT return `status: "approved"` or `status: "denied"` until the payment is actually confirmed or rejected by the acquirer.
+**Why this matters**
+Returning `approved` for an async method tells the Gateway the payment is confirmed before the customer has actually paid. The order ships, but no money was collected. The merchant loses the product and the revenue. The correct flow is to return `undefined` and use the `callbackUrl` to notify the Gateway when the payment is confirmed.
 
-**Why**: Returning `approved` for an async method tells the Gateway the payment is confirmed before the customer has actually paid. The order ships, but no money was collected. The merchant loses the product and the revenue. The correct flow is to return `undefined` and use the `callbackUrl` to notify the Gateway when the payment is confirmed.
+**Detection**
+If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect-based), STOP. Async methods must return `"undefined"` and use callbacks.
 
-**Detection**: If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect-based), STOP. Async methods must return `"undefined"` and use callbacks.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod, callbackUrl } = req.body;
@@ -8809,7 +6898,6 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
   const isAsyncMethod = ["BankInvoice", "Pix"].includes(paymentMethod);
 
   if (isAsyncMethod) {
-    // Initiate async payment — do NOT return approved
     const pending = await acquirer.initiateAsyncPayment(req.body);
 
     await paymentStore.save(paymentId, {
@@ -8840,7 +6928,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod } = req.body;
@@ -8865,13 +6953,9 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
-
-### Step 1: Create a Payment State Store
-
-Build a persistent store keyed by `paymentId` that tracks payment state and cached responses.
+Payment state store with idempotency support:
 
 ```typescript
 interface PaymentRecord {
@@ -8890,48 +6974,15 @@ interface OperationRecord {
   response: Record<string, unknown>;
   createdAt: Date;
 }
-
-class PaymentStore {
-  // Use a database in production (PostgreSQL, DynamoDB, VBase for VTEX IO)
-  private payments = new Map<string, PaymentRecord>();
-  private operations = new Map<string, OperationRecord>();
-
-  async findByPaymentId(paymentId: string): Promise<PaymentRecord | null> {
-    return this.payments.get(paymentId) ?? null;
-  }
-
-  async save(paymentId: string, record: PaymentRecord): Promise<void> {
-    this.payments.set(paymentId, record);
-  }
-
-  async updateStatus(paymentId: string, status: PaymentRecord["status"]): Promise<void> {
-    const record = this.payments.get(paymentId);
-    if (record) {
-      record.status = status;
-      record.updatedAt = new Date();
-    }
-  }
-
-  async findOperation(requestId: string): Promise<OperationRecord | null> {
-    return this.operations.get(requestId) ?? null;
-  }
-
-  async saveOperation(requestId: string, record: OperationRecord): Promise<void> {
-    this.operations.set(requestId, record);
-  }
-}
 ```
 
-### Step 2: Implement Idempotent Create Payment
-
-Guard every Create Payment call with a `paymentId` lookup.
+Idempotent Create Payment with state machine:
 
 ```typescript
 const store = new PaymentStore();
 
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
-  const body = req.body;
-  const { paymentId, paymentMethod, callbackUrl } = body;
+  const { paymentId, paymentMethod, callbackUrl } = req.body;
 
   // Idempotency check
   const existing = await store.findByPaymentId(paymentId);
@@ -8941,7 +6992,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
   }
 
   const isAsync = ["BankInvoice", "Pix"].includes(paymentMethod);
-  const result = await acquirer.process(body);
+  const result = await acquirer.process(req.body);
 
   const status = isAsync ? "undefined" : result.status;
   const response = {
@@ -8960,21 +7011,15 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
   };
 
   await store.save(paymentId, {
-    paymentId,
-    status,
-    response,
-    callbackUrl,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    paymentId, status, response, callbackUrl,
+    createdAt: new Date(), updatedAt: new Date(),
   });
 
   res.status(200).json(response);
 }
 ```
 
-### Step 3: Implement Idempotent Cancel/Capture/Refund with requestId
-
-Guard operations using `requestId` and enforce valid state transitions.
+Idempotent Cancel with `requestId` guard and state validation:
 
 ```typescript
 async function cancelPaymentHandler(req: Request, res: Response): Promise<void> {
@@ -8990,30 +7035,12 @@ async function cancelPaymentHandler(req: Request, res: Response): Promise<void> 
 
   // State machine validation
   const payment = await store.findByPaymentId(paymentId);
-  if (!payment) {
-    res.status(404).json({ error: "Payment not found" });
-    return;
-  }
-
-  if (payment.status === "cancelled") {
-    // Already cancelled — return success idempotently
-    const response = {
-      paymentId,
-      cancellationId: null,
-      code: "already-cancelled",
-      message: "Payment was already cancelled",
-      requestId,
-    };
-    res.status(200).json(response);
-    return;
-  }
-
-  if (!["undefined", "approved"].includes(payment.status)) {
+  if (!payment || !["undefined", "approved"].includes(payment.status)) {
     res.status(200).json({
       paymentId,
       cancellationId: null,
       code: "cancel-failed",
-      message: `Cannot cancel payment in ${payment.status} state`,
+      message: `Cannot cancel payment in ${payment?.status ?? "unknown"} state`,
       requestId,
     });
     return;
@@ -9030,197 +7057,38 @@ async function cancelPaymentHandler(req: Request, res: Response): Promise<void> 
 
   await store.updateStatus(paymentId, "cancelled");
   await store.saveOperation(requestId, {
-    requestId,
-    paymentId,
-    operation: "cancel",
-    response,
-    createdAt: new Date(),
+    requestId, paymentId, operation: "cancel", response, createdAt: new Date(),
   });
 
   res.status(200).json(response);
 }
 ```
 
-### Complete Example
+## Common failure modes
 
-Full idempotent payment lifecycle with state machine:
+- **Processing duplicate payments** — Calling the acquirer for every Create Payment request without checking if the `paymentId` already exists. The Gateway retries `undefined` payments for up to 7 days, so a single $100 payment can result in hundreds of duplicate charges.
+- **Synchronous approval of async payment methods** — Returning `status: "approved"` immediately for Boleto or Pix before the customer has actually paid. The order ships without payment collected.
+- **Losing state between retries** — Storing payment state in memory (`Map`, local variable) instead of a persistent database. On process restart, all state is lost and the next retry creates a duplicate charge.
+- **Generating new identifiers for duplicate requests** — Returning different `tid`, `nsu`, or `authorizationId` values when the Gateway retries with the same `paymentId`. This breaks Gateway reconciliation and can cause double settlements.
+- **Ignoring requestId on Cancel/Capture/Refund** — Not checking `requestId` before processing operations, causing duplicate cancellations or refunds when the Gateway retries.
 
-```typescript
-import express, { Request, Response } from "express";
+## Review checklist
 
-const app = express();
-app.use(express.json());
+- [ ] Does the Create Payment handler check the data store for an existing `paymentId` before calling the acquirer?
+- [ ] Are stored responses returned verbatim for duplicate `paymentId` requests?
+- [ ] Do Cancel, Capture, and Refund handlers check for existing `requestId` before processing?
+- [ ] Is the payment state machine enforced (e.g., cannot capture a cancelled payment)?
+- [ ] Do async payment methods (Boleto, Pix) return `status: "undefined"` instead of `"approved"`?
+- [ ] Is payment state stored in a persistent database (not in-memory)?
+- [ ] Are `delayToCancel` values extended for async methods (e.g., 604800 seconds = 7 days)?
 
-const store = new PaymentStore();
+## Related skills
 
-// Create Payment — idempotent on paymentId
-app.post("/payments", async (req: Request, res: Response) => {
-  const { paymentId, paymentMethod, callbackUrl } = req.body;
-
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json(existing.response);
-    return;
-  }
-
-  const isAsync = ["BankInvoice", "Pix"].includes(paymentMethod);
-  const result = await acquirer.process(req.body);
-  const status = isAsync ? "undefined" : result.status;
-
-  const response = buildCreatePaymentResponse(paymentId, status, result, isAsync);
-  await store.save(paymentId, {
-    paymentId, status, response, callbackUrl,
-    createdAt: new Date(), updatedAt: new Date(),
-  });
-
-  res.status(200).json(response);
-});
-
-// Cancel — idempotent on requestId, validates state
-app.post("/payments/:paymentId/cancellations", async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-  const { requestId } = req.body;
-
-  const existingOp = await store.findOperation(requestId);
-  if (existingOp) { res.status(200).json(existingOp.response); return; }
-
-  const payment = await store.findByPaymentId(paymentId);
-  if (!payment || !["undefined", "approved"].includes(payment.status)) {
-    res.status(200).json({ paymentId, cancellationId: null, code: "cancel-failed", message: "Invalid state", requestId });
-    return;
-  }
-
-  const result = await acquirer.cancel(paymentId);
-  const response = { paymentId, cancellationId: result.cancellationId ?? null, code: null, message: "Cancelled", requestId };
-  await store.updateStatus(paymentId, "cancelled");
-  await store.saveOperation(requestId, { requestId, paymentId, operation: "cancel", response, createdAt: new Date() });
-  res.status(200).json(response);
-});
-
-// Capture — idempotent on requestId, validates state
-app.post("/payments/:paymentId/settlements", async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-  const { requestId, value } = req.body;
-
-  const existingOp = await store.findOperation(requestId);
-  if (existingOp) { res.status(200).json(existingOp.response); return; }
-
-  const payment = await store.findByPaymentId(paymentId);
-  if (!payment || payment.status !== "approved") {
-    res.status(200).json({ paymentId, settleId: null, value: 0, code: "capture-failed", message: "Invalid state", requestId });
-    return;
-  }
-
-  const result = await acquirer.capture(paymentId, value);
-  const response = { paymentId, settleId: result.settleId ?? null, value: result.capturedValue ?? value, code: null, message: null, requestId };
-  await store.updateStatus(paymentId, "settled");
-  await store.saveOperation(requestId, { requestId, paymentId, operation: "capture", response, createdAt: new Date() });
-  res.status(200).json(response);
-});
-
-// Refund — idempotent on requestId, validates state
-app.post("/payments/:paymentId/refunds", async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-  const { requestId, value, settleId } = req.body;
-
-  const existingOp = await store.findOperation(requestId);
-  if (existingOp) { res.status(200).json(existingOp.response); return; }
-
-  const payment = await store.findByPaymentId(paymentId);
-  if (!payment || payment.status !== "settled") {
-    res.status(200).json({ paymentId, refundId: null, value: 0, code: "refund-failed", message: "Invalid state", requestId });
-    return;
-  }
-
-  const result = await acquirer.refund(paymentId, value);
-  const response = { paymentId, refundId: result.refundId ?? null, value: result.refundedValue ?? value, code: null, message: null, requestId };
-  await store.updateStatus(paymentId, "refunded");
-  await store.saveOperation(requestId, { requestId, paymentId, operation: "refund", response, createdAt: new Date() });
-  res.status(200).json(response);
-});
-
-app.listen(443);
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Processing Duplicate Payments
-
-**What happens**: The connector calls the acquirer for every Create Payment request without checking if the `paymentId` already exists in the data store.
-
-**Why it fails**: The Gateway retries `undefined` payments for up to 7 days. Each retry creates a new charge at the acquirer. A single $100 payment can result in hundreds of charges totaling thousands of dollars. This is a critical financial bug.
-
-**Fix**: Always check the data store before calling the acquirer:
-
-```typescript
-async function createPaymentHandler(req: Request, res: Response): Promise<void> {
-  const { paymentId } = req.body;
-
-  // ALWAYS check for existing payment first
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json(existing.response);
-    return;
-  }
-
-  // Only call acquirer for genuinely new payments
-  const result = await acquirer.process(req.body);
-  // ... store and return response
-}
-```
-
----
-
-### Anti-Pattern: Synchronous Approval of Async Payment Methods
-
-**What happens**: The connector returns `status: "approved"` immediately for Boleto or Pix payments, before the customer has actually paid.
-
-**Why it fails**: The Gateway treats `approved` as confirmed payment. The order is released for fulfillment, but no money was collected. The merchant ships products for free. Revenue is lost.
-
-**Fix**: Return `status: "undefined"` for async methods and use the callback mechanism:
-
-```typescript
-const isAsync = ["BankInvoice", "Pix"].includes(paymentMethod);
-const status = isAsync ? "undefined" : result.status;
-// Async methods: notify via callbackUrl when payment is confirmed
-```
-
----
-
-### Anti-Pattern: Losing State Between Retries
-
-**What happens**: The connector stores payment state in memory (e.g., a JavaScript `Map` or local variable) instead of a persistent database.
-
-**Why it fails**: When the connector process restarts (deploy, crash, scaling), all in-memory state is lost. The next Gateway retry creates a duplicate payment at the acquirer because the idempotency check fails to find the original record.
-
-**Fix**: Use a persistent data store:
-
-```typescript
-// WRONG — in-memory, lost on restart
-const payments = new Map<string, PaymentRecord>();
-
-// CORRECT — persistent database
-import { Pool } from "pg";
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-async function findByPaymentId(paymentId: string): Promise<PaymentRecord | null> {
-  const result = await pool.query(
-    "SELECT * FROM payments WHERE payment_id = $1",
-    [paymentId]
-  );
-  return result.rows[0] ?? null;
-}
-
-// For VTEX IO apps, use VBase:
-// const vbase = ctx.clients.vbase;
-// await vbase.getJSON<PaymentRecord>("payments", paymentId);
-```
+- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
+- [`payment-async-flow`](../payment-async-flow/skill.md) — Callback URL notification and the 7-day retry window
+- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance and Secure Proxy
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Implementing a Payment Provider](https://developers.vtex.com/docs/guides/payments-integration-implementing-a-payment-provider) — Official guide explaining idempotency requirements for Cancel, Capture, and Refund operations
 - [Developing a Payment Connector for VTEX](https://help.vtex.com/en/docs/tutorials/developing-a-payment-connector-for-vtex) — Help Center guide with idempotency implementation steps using paymentId and VBase
@@ -9232,80 +7100,41 @@ async function findByPaymentId(paymentId: string): Promise<PaymentRecord | null>
 
 # PCI Compliance & Secure Proxy
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: PCI DSS compliance requirements and the VTEX Secure Proxy mechanism for payment connectors that handle card payments. This includes how `secureProxyUrl` tokenizes sensitive card data, the difference between PCI-certified and non-PCI environments, what data can and cannot be stored or logged, and how to use the `X-PROVIDER-Forward-To` header to route requests through the Secure Proxy to the acquirer.
+Use this skill when:
+- Building a payment connector that accepts credit cards, debit cards, or co-branded cards
+- The connector needs to process card data or communicate with an acquirer
+- Determining whether Secure Proxy is required for the hosting environment
+- Auditing a connector for PCI DSS compliance (data storage, logging, transmission)
 
-**When to use it**: When building a payment connector that accepts credit cards, debit cards, or co-branded cards. Use this skill whenever the connector needs to process card data, communicate with an acquirer, or when determining whether Secure Proxy is required.
+Do not use this skill for:
+- PPP endpoint contracts and response shapes — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
+- Idempotency and duplicate prevention — use [`payment-idempotency`](../payment-idempotency/skill.md)
+- Async payment flows (Boleto, Pix) and callbacks — use [`payment-async-flow`](../payment-async-flow/skill.md)
 
-**What you'll learn**:
-- When Secure Proxy is required vs optional
-- How tokenized card data flows through the Secure Proxy
-- What data must never be stored, logged, or transmitted outside the Secure Proxy
-- How to use `X-PROVIDER-Forward-To` and custom headers to communicate with acquirers
+## Decision rules
 
-## Key Concepts
+- If the connector is hosted in a non-PCI environment (including all VTEX IO apps), it MUST use Secure Proxy.
+- If the connector has PCI DSS certification (AOC signed by a QSA), it can call the acquirer directly with raw card data.
+- Check for `secureProxyUrl` in the Create Payment request — if present, Secure Proxy is active and MUST be used.
+- Card tokens (`numberToken`, `holderToken`, `cscToken`) are only valid when sent through the `secureProxyUrl` — the proxy replaces them with real data before forwarding to the acquirer.
+- Only `card.bin` (first 6 digits), `card.numberLength`, and `card.expiration` may be stored. Everything else is forbidden.
+- Card data must never appear in logs, databases, files, caches, error trackers, or APM tools — even in development.
 
-**Essential knowledge before implementation**:
+## Hard constraints
 
-### Concept 1: PCI DSS and VTEX
+### Constraint: MUST use secureProxyUrl for non-PCI environments
 
-PCI DSS (Payment Card Industry Data Security Standard) is an international standard governing how companies must process card information. VTEX's Payment Gateway is PCI-certified. Connectors that process card payments must either:
+If the connector is hosted in a non-PCI environment (including all VTEX IO apps), it MUST use the `secureProxyUrl` from the Create Payment request to communicate with the acquirer. It MUST NOT call the acquirer directly with raw card data. If a `secureProxyUrl` field is present in the request, Secure Proxy is active and MUST be used.
 
-1. **Have PCI DSS certification** (AOC signed by a QSA) — the connector receives raw card data directly and communicates with the acquirer.
-2. **Use Secure Proxy** — mandatory for non-PCI environments, including all VTEX IO connectors. The connector receives tokenized card data and routes acquirer calls through the Gateway's proxy.
+**Why this matters**
+Non-PCI environments are not authorized to handle raw card data. Calling the acquirer directly bypasses the Gateway's secure data handling, violating PCI DSS. This can result in data breaches, massive fines ($100K+ per month), loss of card processing ability, and legal liability.
 
-### Concept 2: Secure Proxy Tokenization
+**Detection**
+If the connector calls an acquirer endpoint directly (without going through `secureProxyUrl`) when `secureProxyUrl` is present in the request, STOP immediately. All acquirer communication must go through the Secure Proxy.
 
-When Secure Proxy is used, the Gateway replaces sensitive card fields with tokens in the Create Payment request:
-
-- `card.numberToken` replaces the card number (e.g., `#vtex#token#d799bae#number#`)
-- `card.holderToken` replaces the cardholder name
-- `card.cscToken` replaces the CVV/security code
-- `card.bin` and `card.numberLength` are provided as plain values (non-sensitive)
-- `card.expiration` is provided as plain values
-
-The connector uses these tokens when building the request to the acquirer. The Secure Proxy replaces tokens with real values before forwarding to the acquirer.
-
-### Concept 3: secureProxyUrl
-
-The `secureProxyUrl` field is included in the Create Payment request body when Secure Proxy is active. This URL points to the Gateway's proxy endpoint. The connector must POST to this URL (instead of directly to the acquirer) with:
-
-- `X-PROVIDER-Forward-To` header: the acquirer's API endpoint URL
-- `X-PROVIDER-Forward-{HeaderName}` headers: custom headers for the acquirer (prefix is stripped by the proxy)
-- Request body containing tokenized card data
-
-The Secure Proxy replaces tokens with real card data and forwards the request to the acquirer. The response is passed back to the connector unchanged.
-
-### Concept 4: What Can and Cannot Be Stored
-
-**Can store**: `card.bin` (first 6 digits), `card.numberLength`, `card.expiration`, transaction IDs, payment status.
-
-**MUST NEVER store**: Full card number (PAN), CVV/CSC, cardholder name from card data, any token values. These must only exist in memory during request processing and must never be written to databases, files, or logs.
-
-**Architecture/Data Flow (Secure Proxy)**:
-
-```text
-1. Gateway → POST /payments (with secureProxyUrl + tokenized card data) → Connector
-2. Connector → POST secureProxyUrl (tokens in body, X-PROVIDER-Forward-To: acquirer URL) → Gateway
-3. Gateway replaces tokens with real card data → POST acquirer URL → Acquirer
-4. Acquirer → response → Gateway → Connector
-5. Connector → Create Payment response → Gateway
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: MUST Use secureProxyUrl for Non-PCI Environments
-
-**Rule**: If the connector is hosted in a non-PCI environment (including all VTEX IO apps), it MUST use the `secureProxyUrl` from the Create Payment request to communicate with the acquirer. It MUST NOT call the acquirer directly with raw card data. If a `secureProxyUrl` field is present in the request, Secure Proxy is active and MUST be used.
-
-**Why**: Non-PCI environments are not authorized to handle raw card data. Calling the acquirer directly bypasses the Gateway's secure data handling, violating PCI DSS. This can result in data breaches, massive fines ($100K+ per month), loss of card processing ability, and legal liability.
-
-**Detection**: If the connector calls an acquirer endpoint directly (without going through `secureProxyUrl`) when `secureProxyUrl` is present in the request, STOP immediately. All acquirer communication must go through the Secure Proxy.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, secureProxyUrl, card } = req.body;
@@ -9338,7 +7167,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, secureProxyUrl, card } = req.body;
@@ -9368,17 +7197,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST NOT store raw card data
 
-### Constraint: MUST NOT Store Raw Card Data
+The connector MUST NOT store the full card number (PAN), CVV/CSC, cardholder name, or any card token values in any persistent storage — database, file system, cache, session store, or any other durable medium. Card data must only exist in memory during the request lifecycle.
 
-**Rule**: The connector MUST NOT store the full card number (PAN), CVV/CSC, cardholder name, or any card token values in any persistent storage — database, file system, cache, session store, or any other durable medium. Card data must only exist in memory during the request lifecycle.
+**Why this matters**
+Storing raw card data violates PCI DSS Requirement 3. A data breach exposes customers to fraud. Consequences include fines of $5,000–$100,000 per month from card networks, mandatory forensic investigation costs ($50K+), loss of ability to process cards, class-action lawsuits, and criminal liability in some jurisdictions.
 
-**Why**: Storing raw card data violates PCI DSS Requirement 3. A data breach exposes customers to fraud. Consequences include fines of $5,000–$100,000 per month from card networks, mandatory forensic investigation costs ($50K+), loss of ability to process cards, class-action lawsuits, and criminal liability in some jurisdictions.
+**Detection**
+If the code writes card number, CVV, cardholder name, or token values to a database, file, cache (Redis, VBase), or any persistent store, STOP immediately. Only `card.bin` (first 6 digits) and `card.numberLength` may be stored.
 
-**Detection**: If the code writes card number, CVV, cardholder name, or token values to a database, file, cache (Redis, VBase), or any persistent store, STOP immediately. Only `card.bin` (first 6 digits) and `card.numberLength` may be stored.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, card, secureProxyUrl } = req.body;
@@ -9401,7 +7230,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, card } = req.body;
@@ -9420,17 +7249,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST NOT log sensitive card data
 
-### Constraint: MUST NOT Log Sensitive Card Data
+The connector MUST NOT log card numbers, CVV/CSC values, cardholder names, or token values to any logging system — console, file, monitoring service, error tracker, or APM tool. Even in debug mode. Even in development.
 
-**Rule**: The connector MUST NOT log card numbers, CVV/CSC values, cardholder names, or token values to any logging system — console, file, monitoring service, error tracker, or APM tool. Even in debug mode. Even in development.
+**Why this matters**
+Logs are typically stored in plaintext, retained for extended periods, and accessible to many team members. Card data in logs is a PCI DSS violation and a data breach. Log aggregation services (Datadog, Splunk, CloudWatch) may store data across multiple regions, amplifying the breach scope.
 
-**Why**: Logs are typically stored in plaintext, retained for extended periods, and accessible to many team members. Card data in logs is a PCI DSS violation and a data breach. Log aggregation services (Datadog, Splunk, CloudWatch) may store data across multiple regions, amplifying the breach scope.
+**Detection**
+If the code contains `console.log`, `console.error`, `logger.info`, `logger.debug`, or any logging call that includes `card.number`, `card.csc`, `card.holder`, `card.numberToken`, `card.holderToken`, `card.cscToken`, or the full request body without redaction, STOP immediately. Redact or omit all sensitive fields before logging.
 
-**Detection**: If the code contains `console.log`, `console.error`, `logger.info`, `logger.debug`, or any logging call that includes `card.number`, `card.csc`, `card.holder`, `card.numberToken`, `card.holderToken`, `card.cscToken`, or the full request body without redaction, STOP immediately. Redact or omit all sensitive fields before logging.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, card, paymentMethod, value } = req.body;
@@ -9463,7 +7292,7 @@ function redactSensitiveFields(body: Record<string, unknown>): Record<string, un
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   // CRITICAL PCI VIOLATION: Logging the entire request body
@@ -9480,13 +7309,19 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Secure Proxy data flow:
 
-### Step 1: Detect Secure Proxy Mode
+```text
+1. Gateway → POST /payments (with secureProxyUrl + tokenized card data) → Connector
+2. Connector → POST secureProxyUrl (tokens in body, X-PROVIDER-Forward-To: acquirer URL) → Gateway
+3. Gateway replaces tokens with real card data → POST acquirer URL → Acquirer
+4. Acquirer → response → Gateway → Connector
+5. Connector → Create Payment response → Gateway
+```
 
-Check for `secureProxyUrl` in the Create Payment request to determine if Secure Proxy is active.
+Detect Secure Proxy mode:
 
 ```typescript
 interface CreatePaymentRequest {
@@ -9516,25 +7351,10 @@ function isSecureProxyActive(req: CreatePaymentRequest): boolean {
 }
 ```
 
-### Step 2: Build the Acquirer Request with Tokens
-
-When Secure Proxy is active, use tokenized card values in the request body sent to the proxy.
+Build acquirer request using tokens or raw values:
 
 ```typescript
-interface AcquirerPaymentRequest {
-  merchantOrderId: string;
-  payment: {
-    cardNumber: string;
-    holder: string;
-    securityCode: string;
-    expirationDate: string;
-    amount: number;
-  };
-}
-
-function buildAcquirerRequest(
-  paymentReq: CreatePaymentRequest
-): AcquirerPaymentRequest {
+function buildAcquirerRequest(paymentReq: CreatePaymentRequest) {
   const card = paymentReq.card!;
 
   return {
@@ -9551,14 +7371,12 @@ function buildAcquirerRequest(
 }
 ```
 
-### Step 3: Call the Acquirer Through Secure Proxy
-
-Route the request through `secureProxyUrl` with proper headers.
+Call acquirer through Secure Proxy with proper headers:
 
 ```typescript
 async function callAcquirerViaProxy(
   secureProxyUrl: string,
-  acquirerRequest: AcquirerPaymentRequest
+  acquirerRequest: object
 ): Promise<AcquirerResponse> {
   const response = await fetch(secureProxyUrl, {
     method: "POST",
@@ -9583,9 +7401,7 @@ async function callAcquirerViaProxy(
 }
 
 // For PCI-certified environments, call acquirer directly
-async function callAcquirerDirect(
-  acquirerRequest: AcquirerPaymentRequest
-): Promise<AcquirerResponse> {
+async function callAcquirerDirect(acquirerRequest: object): Promise<AcquirerResponse> {
   const response = await fetch(process.env.ACQUIRER_API_URL!, {
     method: "POST",
     headers: {
@@ -9601,160 +7417,7 @@ async function callAcquirerDirect(
 }
 ```
 
-### Complete Example
-
-Full Create Payment handler with Secure Proxy support and safe logging:
-
-```typescript
-import express, { Request, Response } from "express";
-
-const app = express();
-app.use(express.json());
-
-app.post("/payments", async (req: Request, res: Response) => {
-  const body: CreatePaymentRequest = req.body;
-  const { paymentId, card, secureProxyUrl } = body;
-
-  // Safe logging — no card data
-  console.log("Payment request", {
-    paymentId,
-    paymentMethod: body.paymentMethod,
-    value: body.value,
-    hasSecureProxy: !!secureProxyUrl,
-    cardBin: card?.bin,
-  });
-
-  // Store only non-sensitive data
-  await paymentStore.save(paymentId, {
-    paymentId,
-    cardBin: card?.bin,
-    cardNumberLength: card?.numberLength,
-    status: "processing",
-    callbackUrl: body.callbackUrl,
-  });
-
-  // Build the acquirer request using tokens or raw data
-  const acquirerRequest = buildAcquirerRequest(body);
-
-  let acquirerResult: AcquirerResponse;
-  try {
-    if (secureProxyUrl) {
-      // Non-PCI: Route through Secure Proxy
-      acquirerResult = await callAcquirerViaProxy(secureProxyUrl, acquirerRequest);
-    } else {
-      // PCI-certified: Call acquirer directly
-      acquirerResult = await callAcquirerDirect(acquirerRequest);
-    }
-  } catch (error) {
-    // Safe error logging — never log the acquirer request (contains tokens)
-    console.error("Acquirer call failed", {
-      paymentId,
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
-
-    const failResponse = {
-      paymentId,
-      status: "undefined" as const,
-      authorizationId: null,
-      nsu: null,
-      tid: null,
-      acquirer: null,
-      code: "ACQUIRER_ERROR",
-      message: "Failed to communicate with acquirer",
-      delayToAutoSettle: 21600,
-      delayToAutoSettleAfterAntifraud: 1800,
-      delayToCancel: 21600,
-    };
-
-    await paymentStore.updateStatus(paymentId, "undefined");
-    res.status(200).json(failResponse);
-    return;
-  }
-
-  const status = acquirerResult.approved ? "approved" : "denied";
-  const response = {
-    paymentId,
-    status,
-    authorizationId: acquirerResult.authorizationId ?? null,
-    nsu: acquirerResult.nsu ?? null,
-    tid: acquirerResult.tid ?? null,
-    acquirer: "MyAcquirer",
-    code: acquirerResult.code ?? null,
-    message: acquirerResult.message ?? null,
-    delayToAutoSettle: 21600,
-    delayToAutoSettleAfterAntifraud: 1800,
-    delayToCancel: 21600,
-  };
-
-  await paymentStore.updateStatus(paymentId, status);
-  res.status(200).json(response);
-});
-
-app.listen(443);
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Direct Card Handling in Non-PCI Environment
-
-**What happens**: The connector is hosted on VTEX IO or a non-PCI server but calls the acquirer API directly without using the Secure Proxy, attempting to pass card tokens directly to the acquirer.
-
-**Why it fails**: The acquirer receives tokens (e.g., `#vtex#token#d799bae#number#`) instead of real card numbers. The acquirer cannot process these tokens and rejects the transaction. Even if the connector somehow received raw card data, transmitting it from a non-PCI environment violates PCI DSS and exposes the data to interception.
-
-**Fix**: Always check for `secureProxyUrl` and route through the proxy:
-
-```typescript
-if (secureProxyUrl) {
-  // Route through Secure Proxy — tokens are replaced with real data by the Gateway
-  const result = await fetch(secureProxyUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-PROVIDER-Forward-To": "https://api.acquirer.com/v2/payments",
-      "X-PROVIDER-Forward-MerchantId": process.env.MERCHANT_ID!,
-    },
-    body: JSON.stringify(acquirerPayload),
-  });
-}
-```
-
----
-
-### Anti-Pattern: Storing Full Card Numbers (PANs)
-
-**What happens**: The developer stores the full card number in a database column for "reference" or "reconciliation" purposes.
-
-**Why it fails**: This is a direct PCI DSS Requirement 3 violation. If the database is breached, all stored card numbers are compromised. Card networks impose fines of $5,000–$100,000 per month, require a mandatory forensic audit, and may permanently revoke the ability to process card payments.
-
-**Fix**: Store only the BIN (first 6 digits) and last 4 digits for reference:
-
-```typescript
-// Store only non-sensitive identifiers
-await database.query(
-  `INSERT INTO payments (payment_id, card_bin, card_last_four, card_exp_month, card_exp_year)
-   VALUES ($1, $2, $3, $4, $5)`,
-  [
-    paymentId,
-    card.bin,                                    // First 6 digits — safe
-    card.bin ? undefined : undefined,            // Last 4 not available via PPP
-    card.expiration.month,
-    card.expiration.year,
-  ]
-);
-// NEVER store: card.number, card.numberToken, card.csc, card.cscToken, card.holder, card.holderToken
-```
-
----
-
-### Anti-Pattern: Logging Card Details for Debugging
-
-**What happens**: During development or debugging, the developer adds `console.log(req.body)` or `console.log(card)` to troubleshoot payment issues, then forgets to remove it before deployment.
-
-**Why it fails**: The full request body contains card numbers, CVV, and/or token values. These end up in log files, monitoring dashboards, and log aggregation services. This is a PCI DSS violation even in development if the logs are stored persistently. In production, it's a full data breach.
-
-**Fix**: Create a utility that redacts sensitive fields and use it consistently:
+Safe logging utility:
 
 ```typescript
 function safePaymentLog(label: string, body: Record<string, unknown>): void {
@@ -9772,15 +7435,34 @@ function safePaymentLog(label: string, body: Record<string, unknown>): void {
 
   console.log(label, JSON.stringify(safe));
 }
-
-// Usage
-safePaymentLog("Create payment request", req.body);
-// Output: Create payment request {"paymentId":"ABC","paymentMethod":"Visa","value":100,"cardBin":"555544",...}
 ```
 
-## Reference
+## Common failure modes
 
-**Links to VTEX documentation and related resources.**
+- **Direct card handling in non-PCI environment** — Calling the acquirer API directly without using the Secure Proxy. The acquirer receives tokens (e.g., `#vtex#token#d799bae#number#`) instead of real card numbers and rejects the transaction. Even if raw data were available, transmitting it from a non-PCI environment is a PCI DSS violation.
+- **Storing full card numbers (PANs)** — Persisting the full card number in a database for "reference" or "reconciliation". A single breach of this data can result in $100K/month fines, mandatory forensic audits, and permanent loss of card processing ability.
+- **Logging card details for debugging** — Adding `console.log(req.body)` or `console.log(card)` to troubleshoot payment issues and forgetting to remove it. Card data ends up in log files, monitoring dashboards, and log aggregation services. This is a PCI violation even in development.
+- **Stripping X-PROVIDER-Forward headers** — Sending requests to the Secure Proxy without the `X-PROVIDER-Forward-To` header. The proxy does not know where to forward the request and returns an error.
+- **Storing token values** — Writing `card.numberToken`, `card.holderToken`, or `card.cscToken` to a database or cache, treating them as "safe" because they are tokens. Tokens reference real card data and must not be persisted.
+
+## Review checklist
+
+- [ ] Does the connector use `secureProxyUrl` when it is present in the request?
+- [ ] Is `X-PROVIDER-Forward-To` set to the acquirer's API URL in Secure Proxy calls?
+- [ ] Are custom acquirer headers prefixed with `X-PROVIDER-Forward-` when going through the proxy?
+- [ ] Is only `card.bin`, `card.numberLength`, and `card.expiration` stored in the database?
+- [ ] Are card numbers, CVV, holder names, and token values excluded from all log statements?
+- [ ] Is there a redaction utility for safely logging payment request data?
+- [ ] Does the connector support both Secure Proxy (non-PCI) and direct (PCI-certified) modes?
+- [ ] Are error responses logged without including the acquirer request body (which contains tokens)?
+
+## Related skills
+
+- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
+- [`payment-idempotency`](../payment-idempotency/skill.md) — `paymentId`/`requestId` idempotency and state machine
+- [`payment-async-flow`](../payment-async-flow/skill.md) — Async payment methods, callbacks, and the 7-day retry window
+
+## Reference
 
 - [Secure Proxy](https://developers.vtex.com/docs/guides/payments-integration-secure-proxy) — Complete Secure Proxy documentation including flow diagrams, request/response examples, custom tokens, and supported JsonLogic operators
 - [PCI DSS Compliance](https://developers.vtex.com/docs/guides/payments-integration-pci-dss-compliance) — PCI certification requirements, AOC submission process, and when Secure Proxy is mandatory
@@ -9793,67 +7475,40 @@ safePaymentLog("Create payment request", req.body);
 
 # PPP Endpoint Implementation
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The complete set of nine endpoints required by the VTEX Payment Provider Protocol (PPP). This includes six payment-flow endpoints (Manifest, Create Payment, Cancel Payment, Capture/Settle Payment, Refund Payment, Inbound Request) and three configuration-flow endpoints (Create Authorization Token, Provider Authentication Redirect, Get Credentials).
+Use this skill when:
+- Building a new payment connector middleware that integrates a PSP with the VTEX Payment Gateway
+- Implementing, debugging, or extending any of the 9 PPP endpoints
+- Preparing a connector for VTEX Payment Provider Test Suite homologation
 
-**When to use it**: When building a new payment connector middleware that integrates a Payment Service Provider (PSP) with the VTEX Payment Gateway. Use this skill whenever you need to implement, debug, or extend PPP endpoints.
+Do not use this skill for:
+- Idempotency and duplicate prevention logic — use [`payment-idempotency`](../payment-idempotency/skill.md)
+- Async payment flows and callback URLs — use [`payment-async-flow`](../payment-async-flow/skill.md)
+- PCI compliance and Secure Proxy card handling — use [`payment-pci-security`](../payment-pci-security/skill.md)
 
-**What you'll learn**:
-- The exact HTTP method, path, request body, and response shape for all 9 PPP endpoints
-- Required response fields and status codes for each endpoint
-- How the payment flow and configuration flow interact with the VTEX Gateway
-- Constraints that prevent homologation failures and runtime errors
+## Decision rules
 
-## Key Concepts
+- The connector MUST implement all 6 payment-flow endpoints: Manifest, Create Payment, Cancel, Capture/Settle, Refund, Inbound Request.
+- The configuration flow (3 endpoints: Create Auth Token, Provider Auth Redirect, Get Credentials) is optional but recommended for merchant onboarding.
+- All endpoints must be served over HTTPS on port 443 with TLS 1.2.
+- The connector must respond in under 5 seconds during homologation tests and under 20 seconds in production.
+- The provider must be PCI-DSS certified or use Secure Proxy for card payments.
+- The Gateway initiates all calls. The middleware never calls the Gateway except via `callbackUrl` (async notifications) and Secure Proxy (card data forwarding).
 
-**Essential knowledge before implementation**:
+## Hard constraints
 
-### Concept 1: Payment Provider Protocol (PPP)
+### Constraint: Implement all required payment flow endpoints
 
-The PPP is the public contract between a payment provider and the VTEX Payment Gateway. It defines nine REST endpoints that the connector middleware must implement. The Gateway calls these endpoints to authorize, capture, cancel, and refund payments, as well as to configure merchant credentials. The middleware can be written in any language but must be served over HTTPS on port 443 with TLS 1.2 support.
+The connector MUST implement all six payment-flow endpoints: GET `/manifest`, POST `/payments`, POST `/payments/{paymentId}/cancellations`, POST `/payments/{paymentId}/settlements`, POST `/payments/{paymentId}/refunds`, and POST `/payments/{paymentId}/inbound-request/{action}`.
 
-### Concept 2: Payment Flow vs Configuration Flow
+**Why this matters**
+The VTEX Payment Provider Test Suite validates every endpoint during homologation. Missing endpoints cause test failures and the connector will not be approved. At runtime, the Gateway expects all endpoints — a missing cancel endpoint means payments cannot be voided.
 
-The protocol is divided into two flows:
+**Detection**
+If the connector router/handler file does not define handlers for all 6 payment-flow paths, STOP and add the missing endpoints before proceeding.
 
-- **Payment Flow** (6 endpoints): Handles runtime payment operations — listing capabilities (Manifest), creating payments, cancelling, capturing/settling, refunding, and inbound requests.
-- **Configuration Flow** (3 endpoints): Handles merchant onboarding — creating auth tokens, redirecting the merchant to the provider's login, and returning credentials (`appKey`, `appToken`, `applicationId`) to VTEX.
-
-The configuration flow is optional but recommended. The payment flow is mandatory.
-
-### Concept 3: Endpoint Requirements
-
-All endpoints must satisfy these requirements:
-- Served over HTTPS on port 443 with TLS 1.2
-- Use a standard subdomain/domain (no IP addresses)
-- Respond in under 5 seconds during homologation tests
-- Respond in under 20 seconds in production
-- The provider must be PCI-DSS certified or use Secure Proxy for card payments
-
-**Architecture/Data Flow**:
-
-```text
-Shopper → VTEX Checkout → VTEX Payment Gateway → [Your Connector Middleware] → Acquirer/PSP
-                                ↕
-                    Configuration Flow (Admin)
-```
-
-The Gateway initiates all calls. Your middleware never calls the Gateway except via `callbackUrl` (for async notifications) and Secure Proxy (for card data forwarding).
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: Implement All Required Payment Flow Endpoints
-
-**Rule**: The connector MUST implement all six payment-flow endpoints: GET `/manifest`, POST `/payments`, POST `/payments/{paymentId}/cancellations`, POST `/payments/{paymentId}/settlements`, POST `/payments/{paymentId}/refunds`, and POST `/payments/{paymentId}/inbound-request/{action}`.
-
-**Why**: The VTEX Payment Provider Test Suite validates every endpoint during homologation. Missing endpoints cause test failures and the connector will not be approved. At runtime, the Gateway expects all endpoints to be available — a missing cancel endpoint means payments cannot be voided.
-
-**Detection**: If the connector router/handler file does not define handlers for all 6 payment-flow paths, STOP and add the missing endpoints before proceeding.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 import { Router } from "express";
 
@@ -9870,7 +7525,7 @@ router.post("/payments/:paymentId/inbound-request/:action", inboundRequestHandle
 export default router;
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 import { Router } from "express";
 
@@ -9885,17 +7540,17 @@ router.post("/payments/:paymentId/settlements", capturePaymentHandler);
 export default router;
 ```
 
----
+### Constraint: Return correct HTTP status codes and response shapes
 
-### Constraint: Return Correct HTTP Status Codes and Response Shapes
+Each endpoint MUST return the exact response shape documented in the PPP API. Create Payment MUST return `paymentId`, `status`, `authorizationId`, `tid`, `nsu`, `acquirer`, `code`, `message`, `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, and `delayToCancel`. Cancel MUST return `paymentId`, `cancellationId`, `code`, `message`, `requestId`. Capture MUST return `paymentId`, `settleId`, `value`, `code`, `message`, `requestId`. Refund MUST return `paymentId`, `refundId`, `value`, `code`, `message`, `requestId`.
 
-**Rule**: Each endpoint MUST return the exact response shape documented in the PPP API. Create Payment MUST return `paymentId`, `status`, `authorizationId`, `tid`, `nsu`, `acquirer`, `code`, `message`, `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, and `delayToCancel`. Cancel MUST return `paymentId`, `cancellationId`, `code`, `message`, `requestId`. Capture MUST return `paymentId`, `settleId`, `value`, `code`, `message`, `requestId`. Refund MUST return `paymentId`, `refundId`, `value`, `code`, `message`, `requestId`.
+**Why this matters**
+The Gateway parses these fields programmatically. Missing fields cause deserialization errors and the Gateway treats the payment as failed. Incorrect `delayToAutoSettle` values cause payments to auto-cancel or auto-capture at wrong times.
 
-**Why**: The Gateway parses these fields programmatically. Missing fields cause deserialization errors, and the Gateway treats the payment as failed. Incorrect `delayToAutoSettle` values (or missing ones) cause payments to auto-cancel or auto-capture at wrong times.
+**Detection**
+If a response object is missing any of the required fields for its endpoint, STOP and add the missing fields.
 
-**Detection**: If a response object is missing any of the required fields for its endpoint, STOP and add the missing fields.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 interface CreatePaymentResponse {
   paymentId: string;
@@ -9935,7 +7590,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // Missing required fields — Gateway will reject this response
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
@@ -9950,29 +7605,20 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: Manifest must declare all supported payment methods
 
-### Constraint: Manifest Must Declare All Supported Payment Methods
+The GET `/manifest` endpoint MUST return a `paymentMethods` array listing every payment method the connector supports, with the correct `name` and `allowsSplit` configuration for each.
 
-**Rule**: The GET `/manifest` endpoint MUST return a `paymentMethods` array listing every payment method the connector supports, with the correct `name` and `allowsSplit` configuration for each.
+**Why this matters**
+The Gateway reads the manifest to determine which payment methods are available. If a method is missing, merchants cannot configure it in the VTEX Admin. An incorrect `allowsSplit` value causes split payment failures.
 
-**Why**: The Gateway reads the manifest to determine which payment methods are available for this connector. If a method is missing from the manifest, merchants cannot configure it in the VTEX Admin. The `allowsSplit` field controls revenue split behavior — an incorrect value causes split payment failures.
+**Detection**
+If the manifest handler returns an empty `paymentMethods` array or hardcodes methods the provider does not actually support, STOP and fix the manifest.
 
-**Detection**: If the manifest handler returns an empty `paymentMethods` array or hardcodes methods that the provider does not actually support, STOP and fix the manifest to match the provider's real capabilities.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
-interface PaymentMethodManifest {
-  name: string;
-  allowsSplit: "onCapture" | "onAuthorize" | "disabled";
-}
-
-interface ManifestResponse {
-  paymentMethods: PaymentMethodManifest[];
-}
-
 async function manifestHandler(_req: Request, res: Response): Promise<void> {
-  const manifest: ManifestResponse = {
+  const manifest = {
     paymentMethods: [
       { name: "Visa", allowsSplit: "onCapture" },
       { name: "Mastercard", allowsSplit: "onCapture" },
@@ -9986,7 +7632,7 @@ async function manifestHandler(_req: Request, res: Response): Promise<void> {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // Empty manifest — no payment methods will appear in the Admin
 async function manifestHandler(_req: Request, res: Response): Promise<void> {
@@ -9994,13 +7640,17 @@ async function manifestHandler(_req: Request, res: Response): Promise<void> {
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Architecture overview:
 
-### Step 1: Define Types for All Endpoint Contracts
+```text
+Shopper → VTEX Checkout → VTEX Payment Gateway → [Your Connector Middleware] → Acquirer/PSP
+                                ↕
+                    Configuration Flow (Admin)
+```
 
-Define TypeScript interfaces for every request and response shape. This catches missing fields at compile time.
+Recommended TypeScript interfaces for all endpoint contracts:
 
 ```typescript
 // --- Manifest ---
@@ -10048,11 +7698,6 @@ interface CreatePaymentResponse {
 }
 
 // --- Cancel Payment ---
-interface CancelPaymentRequest {
-  paymentId: string;
-  requestId: string;
-}
-
 interface CancelPaymentResponse {
   paymentId: string;
   cancellationId: string | null;
@@ -10062,13 +7707,6 @@ interface CancelPaymentResponse {
 }
 
 // --- Capture/Settle Payment ---
-interface CapturePaymentRequest {
-  paymentId: string;
-  transactionId: string;
-  value: number;
-  requestId: string;
-}
-
 interface CapturePaymentResponse {
   paymentId: string;
   settleId: string | null;
@@ -10079,14 +7717,6 @@ interface CapturePaymentResponse {
 }
 
 // --- Refund Payment ---
-interface RefundPaymentRequest {
-  paymentId: string;
-  transactionId: string;
-  settleId: string;
-  value: number;
-  requestId: string;
-}
-
 interface RefundPaymentResponse {
   paymentId: string;
   refundId: string | null;
@@ -10097,15 +7727,6 @@ interface RefundPaymentResponse {
 }
 
 // --- Inbound Request ---
-interface InboundRequest {
-  requestId: string;
-  transactionId: string;
-  paymentId: string;
-  authorizationId: string;
-  tid: string;
-  requestData: { body: string };
-}
-
 interface InboundResponse {
   requestId: string;
   paymentId: string;
@@ -10117,9 +7738,7 @@ interface InboundResponse {
 }
 ```
 
-### Step 2: Implement the Payment Flow Handlers
-
-Wire up each handler with proper error handling and response construction.
+Complete payment flow router with all 6 endpoints:
 
 ```typescript
 import { Router, Request, Response } from "express";
@@ -10127,14 +7746,13 @@ import { Router, Request, Response } from "express";
 const router = Router();
 
 router.get("/manifest", async (_req: Request, res: Response) => {
-  const manifest: ManifestResponse = {
+  res.status(200).json({
     paymentMethods: [
       { name: "Visa", allowsSplit: "onCapture" },
       { name: "Mastercard", allowsSplit: "onCapture" },
       { name: "Pix", allowsSplit: "disabled" },
     ],
-  };
-  res.status(200).json(manifest);
+  });
 });
 
 router.post("/payments", async (req: Request, res: Response) => {
@@ -10159,74 +7777,65 @@ router.post("/payments", async (req: Request, res: Response) => {
 
 router.post("/payments/:paymentId/cancellations", async (req: Request, res: Response) => {
   const { paymentId } = req.params;
-  const { requestId } = req.body as CancelPaymentRequest;
+  const { requestId } = req.body;
   const result = await cancelWithAcquirer(paymentId);
 
-  const response: CancelPaymentResponse = {
+  res.status(200).json({
     paymentId,
     cancellationId: result.cancellationId ?? null,
     code: result.code ?? null,
     message: result.message ?? "Successfully cancelled",
     requestId,
-  };
-  res.status(200).json(response);
+  });
 });
 
 router.post("/payments/:paymentId/settlements", async (req: Request, res: Response) => {
-  const body: CapturePaymentRequest = req.body;
+  const body = req.body;
   const result = await captureWithAcquirer(body.paymentId, body.value);
 
-  const response: CapturePaymentResponse = {
+  res.status(200).json({
     paymentId: body.paymentId,
     settleId: result.settleId ?? null,
     value: result.capturedValue ?? body.value,
     code: result.code ?? null,
     message: result.message ?? null,
     requestId: body.requestId,
-  };
-  res.status(200).json(response);
+  });
 });
 
 router.post("/payments/:paymentId/refunds", async (req: Request, res: Response) => {
-  const body: RefundPaymentRequest = req.body;
+  const body = req.body;
   const result = await refundWithAcquirer(body.paymentId, body.value);
 
-  const response: RefundPaymentResponse = {
+  res.status(200).json({
     paymentId: body.paymentId,
     refundId: result.refundId ?? null,
     value: result.refundedValue ?? body.value,
     code: result.code ?? null,
     message: result.message ?? null,
     requestId: body.requestId,
-  };
-  res.status(200).json(response);
+  });
 });
 
-router.post(
-  "/payments/:paymentId/inbound-request/:action",
-  async (req: Request, res: Response) => {
-    const body: InboundRequest = req.body;
-    const result = await handleInbound(body);
+router.post("/payments/:paymentId/inbound-request/:action", async (req: Request, res: Response) => {
+  const body = req.body;
+  const result = await handleInbound(body);
 
-    const response: InboundResponse = {
-      requestId: body.requestId,
-      paymentId: body.paymentId,
-      responseData: {
-        statusCode: 200,
-        contentType: "application/json",
-        content: JSON.stringify(result),
-      },
-    };
-    res.status(200).json(response);
-  }
-);
+  res.status(200).json({
+    requestId: body.requestId,
+    paymentId: body.paymentId,
+    responseData: {
+      statusCode: 200,
+      contentType: "application/json",
+      content: JSON.stringify(result),
+    },
+  });
+});
 
 export default router;
 ```
 
-### Step 3: Implement the Configuration Flow Handlers
-
-These endpoints handle merchant onboarding through the VTEX Admin.
+Configuration flow endpoints (optional, for merchant onboarding):
 
 ```typescript
 import { Router, Request, Response } from "express";
@@ -10236,20 +7845,13 @@ const configRouter = Router();
 // 1. POST /authorization/token
 configRouter.post("/authorization/token", async (req: Request, res: Response) => {
   const { applicationId, returnUrl } = req.body;
-  // applicationId is always "vtex"
   const token = await generateAuthorizationToken(applicationId, returnUrl);
-
-  res.status(200).json({
-    applicationId,
-    token,
-  });
+  res.status(200).json({ applicationId, token });
 });
 
 // 2. GET /authorization/redirect
 configRouter.get("/authorization/redirect", async (req: Request, res: Response) => {
   const { token } = req.query;
-  // Redirect to provider's OAuth/consent page
-  // After merchant approves, redirect back with authorizationCode appended to returnUrl
   const providerLoginUrl = buildProviderLoginUrl(token as string);
   res.redirect(302, providerLoginUrl);
 });
@@ -10258,7 +7860,6 @@ configRouter.get("/authorization/redirect", async (req: Request, res: Response) 
 configRouter.get("/authorization/credentials", async (req: Request, res: Response) => {
   const { authorizationCode } = req.query;
   const credentials = await exchangeCodeForCredentials(authorizationCode as string);
-
   res.status(200).json({
     applicationId: "vtex",
     appKey: credentials.appKey,
@@ -10269,111 +7870,31 @@ configRouter.get("/authorization/credentials", async (req: Request, res: Respons
 export default configRouter;
 ```
 
-### Complete Example
+## Common failure modes
 
-Tying both flows together in a single Express application:
+- **Partial endpoint implementation** — Implementing only Create Payment and Capture while skipping Manifest, Cancel, Refund, and Inbound Request. The Test Suite tests all endpoints and will fail homologation. At runtime, the Gateway cannot cancel or refund payments.
+- **Incorrect HTTP methods** — Using POST for the Manifest endpoint or GET for Create Payment. The Gateway sends specific HTTP methods; mismatched handlers return 404 or 405.
+- **Missing or zero delay values** — Omitting `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, or `delayToCancel` from the Create Payment response, or setting them to zero. This causes immediate auto-capture or auto-cancel, leading to premature settlement or lost payments.
+- **Incomplete response shapes** — Returning only `paymentId` and `status` without `authorizationId`, `tid`, `nsu`, `acquirer`, etc. The Gateway deserializes all fields and treats missing ones as failures.
 
-```typescript
-import express from "express";
-import paymentRouter from "./routes/payment";
-import configRouter from "./routes/config";
+## Review checklist
 
-const app = express();
-app.use(express.json());
+- [ ] Are all 6 payment-flow endpoints implemented (Manifest, Create Payment, Cancel, Capture, Refund, Inbound Request)?
+- [ ] Does each endpoint return the complete response shape with all required fields?
+- [ ] Does the Manifest declare all payment methods the provider actually supports?
+- [ ] Are the correct HTTP methods used (GET for Manifest, POST for everything else)?
+- [ ] Are `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, and `delayToCancel` set to sensible non-zero values?
+- [ ] Is the connector served over HTTPS on port 443 with TLS 1.2?
+- [ ] Does the connector respond within 5 seconds for test suite and 20 seconds in production?
+- [ ] Are configuration flow endpoints implemented if merchant self-onboarding is needed?
 
-// Payment flow endpoints
-app.use("/", paymentRouter);
+## Related skills
 
-// Configuration flow endpoints
-app.use("/", configRouter);
-
-// Health check
-app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
-
-const PORT = 443;
-app.listen(PORT, () => {
-  console.log(`Payment provider middleware running on port ${PORT}`);
-});
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Partial Endpoint Implementation
-
-**What happens**: The developer implements only Create Payment and Capture, skipping Manifest, Cancel, Refund, and Inbound Request endpoints.
-
-**Why it fails**: The VTEX Payment Provider Test Suite tests all endpoints during homologation. Missing endpoints cause immediate test failure. At runtime, the Gateway cannot cancel or refund payments, leaving merchants unable to process returns.
-
-**Fix**: Implement all six payment-flow endpoints from the start. Use the type definitions above to scaffold all handlers before adding business logic.
-
-```typescript
-// Start by creating stub handlers for every endpoint
-const stubHandler = async (req: Request, res: Response) => {
-  res.status(501).json({ error: "Not implemented yet" });
-};
-
-router.get("/manifest", stubHandler);
-router.post("/payments", stubHandler);
-router.post("/payments/:paymentId/cancellations", stubHandler);
-router.post("/payments/:paymentId/settlements", stubHandler);
-router.post("/payments/:paymentId/refunds", stubHandler);
-router.post("/payments/:paymentId/inbound-request/:action", stubHandler);
-// Then replace each stub with real logic incrementally
-```
-
----
-
-### Anti-Pattern: Using Incorrect HTTP Methods
-
-**What happens**: The developer uses POST for the Manifest endpoint or GET for Create Payment.
-
-**Why it fails**: The Gateway sends requests with specific HTTP methods. A POST handler on `/manifest` will not receive the GET request the Gateway sends, returning a 404 or 405.
-
-**Fix**: Follow the exact HTTP methods from the protocol:
-
-```typescript
-// GET for manifest — the Gateway reads capabilities, not writes
-router.get("/manifest", manifestHandler);
-
-// POST for all payment operations — these create or modify state
-router.post("/payments", createPaymentHandler);
-router.post("/payments/:paymentId/cancellations", cancelPaymentHandler);
-router.post("/payments/:paymentId/settlements", capturePaymentHandler);
-router.post("/payments/:paymentId/refunds", refundPaymentHandler);
-router.post("/payments/:paymentId/inbound-request/:action", inboundRequestHandler);
-```
-
----
-
-### Anti-Pattern: Missing or Incorrect Delay Values
-
-**What happens**: The developer omits `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, or `delayToCancel` from the Create Payment response, or sets them to zero.
-
-**Why it fails**: These values (in seconds) control when the Gateway automatically captures or cancels a payment. Zero or missing values cause immediate auto-capture or auto-cancel, which leads to premature settlement or lost payments.
-
-**Fix**: Always return sensible delay values in seconds:
-
-```typescript
-const response: CreatePaymentResponse = {
-  paymentId: body.paymentId,
-  status: "approved",
-  authorizationId: "AUTH-123",
-  nsu: "NSU-456",
-  tid: "TID-789",
-  acquirer: "MyProvider",
-  code: "200",
-  message: "Approved",
-  delayToAutoSettle: 21600,                  // 6 hours
-  delayToAutoSettleAfterAntifraud: 1800,     // 30 minutes
-  delayToCancel: 21600,                      // 6 hours
-};
-```
+- [`payment-idempotency`](../payment-idempotency/skill.md) — Idempotency keys (`paymentId`, `requestId`) and state machine for duplicate prevention
+- [`payment-async-flow`](../payment-async-flow/skill.md) — Async payment methods, `callbackUrl`, and the 7-day retry window
+- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance, Secure Proxy, and card data handling
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Payment Provider Protocol Overview](https://developers.vtex.com/docs/guides/payment-provider-protocol-api-overview) — API overview with endpoint requirements, common parameters, and test suite info
 - [Implementing a Payment Provider](https://developers.vtex.com/docs/guides/payments-integration-implementing-a-payment-provider) — Step-by-step guide covering all 9 endpoints with request/response examples
@@ -10388,29 +7909,30 @@ const response: CreatePaymentResponse = {
 
 # App Architecture & Manifest Configuration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The foundational structure of every VTEX IO app — the `manifest.json` file, builder system, policy declarations, dependency management, `service.json` resource limits, and app lifecycle (link, publish, deploy).
+Use this skill when working with the foundational structure of a VTEX IO app — the `manifest.json` file, builder system, policy declarations, dependency management, `service.json` resource limits, and app lifecycle (link, publish, deploy).
 
-**When to use it**: When creating a new VTEX IO app from scratch, adding a builder to an existing app, configuring policies for API access, or troubleshooting deployment failures related to manifest misconfiguration.
+- Creating a new VTEX IO app from scratch
+- Adding a builder to an existing app
+- Configuring policies for API access
+- Troubleshooting deployment failures related to manifest misconfiguration
 
-**What you'll learn**:
-- How to configure `manifest.json` with the correct fields, builders, and policies
-- Which builders to use for different app capabilities (backend, frontend, GraphQL, admin, pixel, messages, store themes)
-- How to declare policies for accessing VTEX APIs and external services
-- How `service.json` controls memory and timeout limits for backend services
+Do not use this skill for:
+- Backend service implementation details (use `vtex-io-service-apps` instead)
+- React component development (use `vtex-io-react-apps` instead)
+- GraphQL schema and resolver details (use `vtex-io-graphql-api` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Every VTEX IO app starts with `manifest.json` — it defines identity (`vendor`, `name`, `version`), builders, dependencies, and policies.
+- Use the builder that matches the directory: `node` for `/node`, `react` for `/react`, `graphql` for `/graphql`, `admin` for `/admin`, `pixel` for `/pixel`, `messages` for `/messages`, `store` for `/store`, `masterdata` for `/masterdata`, `styles` for `/styles`.
+- Declare policies for every external host your app calls and every VTEX Admin resource it accesses.
+- Use `service.json` in `/node` to configure memory (max 512MB), timeout, autoscaling, and route definitions.
+- Use semver ranges (`3.x`) for dependencies, not exact versions.
+- Use `peerDependencies` for apps that must be present but should not be auto-installed.
 
-### Concept 1: Manifest.json
-
-The `manifest.json` file is the entry point for every VTEX IO app. It defines the app's identity (`vendor`, `name`, `version`), declares which `builders` will process the app's code, lists `dependencies` on other VTEX IO apps, and specifies `policies` granting access to external services and VTEX resources. Without a valid manifest, the app cannot be linked, published, or deployed.
-
-### Concept 2: Builders
-
-Builders are abstractions that process specific directories in your app. Each builder transforms code in its corresponding folder into runnable artifacts. The key builders are:
+Builders reference:
 
 | Builder | Directory | Purpose |
 |---------|-----------|---------|
@@ -10424,42 +7946,12 @@ Builders are abstractions that process specific directories in your app. Each bu
 | `masterdata` | `/masterdata` | Master Data v2 entity schemas and triggers |
 | `styles` | `/styles` | CSS/Tachyons configuration for Store Framework themes |
 
-### Concept 3: Policies
-
-Policies grant your app permission to access external resources. There are three types:
-
+Policy types:
 1. **Outbound-access policies**: Grant access to explicit URLs (external APIs or VTEX endpoints).
 2. **License Manager policies**: Grant access to VTEX Admin resources using resource keys.
 3. **App role-based policies**: Grant access to routes or GraphQL queries exposed by other IO apps, using the format `{vendor}.{app-name}:{policy-name}`.
 
-Without the correct policies, API calls from your app will fail with `403 Forbidden` errors at runtime.
-
-### Concept 4: service.json
-
-The `service.json` file in the `/node` directory configures runtime resource limits for backend services:
-
-```json
-{
-  "memory": 256,
-  "timeout": 30,
-  "minReplicas": 2,
-  "maxReplicas": 10,
-  "workers": 4,
-  "routes": {
-    "status": {
-      "path": "/_v/status/:code",
-      "public": true
-    }
-  }
-}
-```
-
-- `memory`: Maximum memory in MB (default 256, max 512)
-- `timeout`: Request timeout in seconds (default 30)
-- `minReplicas` / `maxReplicas`: Autoscaling range
-- `routes`: HTTP route definitions with path patterns and access control
-
-**Architecture/Data Flow**:
+Architecture:
 
 ```text
 manifest.json
@@ -10476,19 +7968,22 @@ manifest.json
 └── peerDependencies → apps required but not auto-installed
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Declare All Required Builders
 
-**Rule**: Every directory in your app that contains processable code MUST have a corresponding builder declared in `manifest.json`. If you have a `/node` directory, the `node` builder MUST be declared. If you have a `/react` directory, the `react` builder MUST be declared.
+Every directory in your app that contains processable code MUST have a corresponding builder declared in `manifest.json`. If you have a `/node` directory, the `node` builder MUST be declared. If you have a `/react` directory, the `react` builder MUST be declared.
 
-**Why**: Without the builder declaration, the VTEX IO platform ignores the directory entirely. Your backend code will not compile, your React components will not render, and your GraphQL schemas will not be registered. The app will link successfully but the functionality will silently be absent.
+**Why this matters**
 
-**Detection**: If you see backend TypeScript code in a `/node` directory but the manifest does not declare `"node": "7.x"` in `builders`, STOP and add the builder. Same applies to `/react` without `"react": "3.x"`, `/graphql` without `"graphql": "1.x"`, etc.
+Without the builder declaration, the VTEX IO platform ignores the directory entirely. Your backend code will not compile, your React components will not render, and your GraphQL schemas will not be registered. The app will link successfully but the functionality will silently be absent.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see backend TypeScript code in a `/node` directory but the manifest does not declare `"node": "7.x"` in `builders`, STOP and add the builder. Same applies to `/react` without `"react": "3.x"`, `/graphql` without `"graphql": "1.x"`, etc.
+
+**Correct**
+
 ```json
 {
   "name": "my-service-app",
@@ -10506,7 +8001,8 @@ manifest.json
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "name": "my-service-app",
@@ -10520,23 +8016,26 @@ manifest.json
   "dependencies": {},
   "policies": []
 }
-// Missing "node" and "graphql" builders — the /node and /graphql
-// directories will be completely ignored. Backend code won't compile,
-// GraphQL schema won't be registered. The app links without errors
-// but nothing works.
 ```
+
+Missing "node" and "graphql" builders — the /node and /graphql directories will be completely ignored. Backend code won't compile, GraphQL schema won't be registered. The app links without errors but nothing works.
 
 ---
 
 ### Constraint: Declare Policies for All External Access
 
-**Rule**: Every external API call or VTEX resource access MUST have a corresponding policy in `manifest.json`. This includes outbound HTTP calls to external hosts, VTEX Admin resource access, and consumption of other apps' GraphQL APIs.
+Every external API call or VTEX resource access MUST have a corresponding policy in `manifest.json`. This includes outbound HTTP calls to external hosts, VTEX Admin resource access, and consumption of other apps' GraphQL APIs.
 
-**Why**: VTEX IO sandboxes apps for security. Without the proper policy, any outbound HTTP request will be blocked at the infrastructure level, returning a `403 Forbidden` error. This is not a code issue — it is a platform-level restriction.
+**Why this matters**
 
-**Detection**: If you see code making API calls (via clients or HTTP) to a host, STOP and verify that an `outbound-access` policy exists for that host in the manifest. If you see `licenseManager.canAccessResource(...)`, verify a License Manager policy exists.
+VTEX IO sandboxes apps for security. Without the proper policy, any outbound HTTP request will be blocked at the infrastructure level, returning a `403 Forbidden` error. This is not a code issue — it is a platform-level restriction.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see code making API calls (via clients or HTTP) to a host, STOP and verify that an `outbound-access` policy exists for that host in the manifest. If you see `licenseManager.canAccessResource(...)`, verify a License Manager policy exists.
+
+**Correct**
+
 ```json
 {
   "policies": [
@@ -10567,27 +8066,32 @@ manifest.json
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "policies": []
 }
-// Empty policies array while the app makes calls to api.vtex.com
-// and uses Master Data. All outbound requests will fail at runtime
-// with 403 Forbidden errors that are difficult to debug.
 ```
+
+Empty policies array while the app makes calls to api.vtex.com and uses Master Data. All outbound requests will fail at runtime with 403 Forbidden errors that are difficult to debug.
 
 ---
 
 ### Constraint: Follow App Naming Conventions
 
-**Rule**: App names MUST be in kebab-case (lowercase letters separated by hyphens). The vendor MUST match the VTEX account name. Version MUST follow Semantic Versioning 2.0.0.
+App names MUST be in kebab-case (lowercase letters separated by hyphens). The vendor MUST match the VTEX account name. Version MUST follow Semantic Versioning 2.0.0.
 
-**Why**: Apps with invalid names cannot be published to the VTEX App Store. Names with special characters or uppercase letters will be rejected by the builder-hub. Vendor mismatch prevents the account from managing the app.
+**Why this matters**
 
-**Detection**: If you see an app name with uppercase letters, underscores, special characters, or numbers at the beginning, STOP and fix the name.
+Apps with invalid names cannot be published to the VTEX App Store. Names with special characters or uppercase letters will be rejected by the builder-hub. Vendor mismatch prevents the account from managing the app.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see an app name with uppercase letters, underscores, special characters, or numbers at the beginning, STOP and fix the name.
+
+**Correct**
+
 ```json
 {
   "name": "order-status-dashboard",
@@ -10596,39 +8100,29 @@ manifest.json
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "name": "Order_Status_Dashboard",
   "vendor": "mycompany",
   "version": "2.1"
 }
-// Uppercase letters and underscores in the name will be rejected.
-// Version "2.1" is not valid semver — must be "2.1.0".
 ```
 
-## Implementation Pattern
+Uppercase letters and underscores in the name will be rejected. Version "2.1" is not valid semver — must be "2.1.0".
 
-**The canonical, recommended way to scaffold and configure a VTEX IO app.**
+## Preferred pattern
 
-### Step 1: Initialize the App
-
-Use the VTEX IO CLI to create a new app from a boilerplate template:
+Initialize with the VTEX IO CLI:
 
 ```bash
-# Install VTEX IO CLI if not already installed
 vtex init
-
-# Select the appropriate template:
-# - service-example: Backend service with Node
-# - graphql-example: GraphQL API with Node
-# - react-app-template: Frontend React app
-# - store-theme: Store Framework theme
 ```
 
-### Step 2: Configure manifest.json
+Select the appropriate template: `service-example`, `graphql-example`, `react-app-template`, or `store-theme`.
 
-Edit the manifest with your app's identity and required builders:
+Recommended manifest configuration:
 
 ```json
 {
@@ -10666,9 +8160,7 @@ Edit the manifest with your app's identity and required builders:
 }
 ```
 
-### Step 3: Configure service.json for Backend Apps
-
-Create `/node/service.json` to define resource limits and routes:
+Recommended `service.json` for backend apps:
 
 ```json
 {
@@ -10690,9 +8182,7 @@ Create `/node/service.json` to define resource limits and routes:
 }
 ```
 
-### Step 4: Set Up the Directory Structure
-
-Create the directories matching your declared builders:
+Recommended directory structure:
 
 ```text
 my-app/
@@ -10721,9 +8211,7 @@ my-app/
     └── README.md
 ```
 
-### Complete Example
-
-A full `manifest.json` for a comprehensive app using multiple builders:
+Full `manifest.json` for a comprehensive app using multiple builders:
 
 ```json
 {
@@ -10785,80 +8273,22 @@ A full `manifest.json` for a comprehensive app using multiple builders:
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Declaring unused builders**: Adding builders "just in case" creates overhead during the build process. Unused builder directories can cause build warnings. Only declare builders your app actively uses.
+- **Wildcard outbound policies**: Using `"host": "*"` or `"path": "/*"` is a security risk, will be rejected during app review, and makes security audits difficult. Declare specific policies for each external service.
+- **Hardcoding version in dependencies**: Pinning exact versions like `"vtex.store-components": "3.165.0"` prevents receiving bug fixes. Use major version ranges with `x` wildcard: `"vtex.store-components": "3.x"`.
 
-### Anti-Pattern: Declaring Unused Builders
+## Review checklist
 
-**What happens**: Developers add builders "just in case" — declaring `react`, `graphql`, `admin`, and `store` builders even though the app only needs `node`.
-
-**Why it fails**: Each builder creates overhead during the build process. Unused builder directories that are empty or missing can cause build warnings. Worse, if someone accidentally adds files to a builder directory, they may introduce unintended functionality.
-
-**Fix**: Only declare builders that your app actively uses. Remove any builder declarations without corresponding directory content.
-
-```json
-{
-  "builders": {
-    "node": "7.x",
-    "graphql": "1.x"
-  }
-}
-```
-
----
-
-### Anti-Pattern: Wildcard Outbound Policies
-
-**What happens**: Developers use overly broad outbound-access policies like `"host": "*"` or `"path": "/*"` to avoid policy errors during development.
-
-**Why it fails**: Overly permissive policies are a security risk and will be rejected during app review for the VTEX App Store. They also make it unclear which external services the app actually communicates with, making security audits difficult.
-
-**Fix**: Declare specific policies for each external service your app communicates with:
-
-```json
-{
-  "policies": [
-    {
-      "name": "outbound-access",
-      "attrs": {
-        "host": "api.vtex.com",
-        "path": "/api/*"
-      }
-    },
-    {
-      "name": "outbound-access",
-      "attrs": {
-        "host": "my-external-api.example.com",
-        "path": "/v1/*"
-      }
-    }
-  ]
-}
-```
-
----
-
-### Anti-Pattern: Hardcoding Version in Dependencies
-
-**What happens**: Developers pin exact versions in dependencies like `"vtex.store-components": "3.165.0"` instead of using version ranges.
-
-**Why it fails**: Exact versions prevent your app from receiving bug fixes and patches from dependency updates. VTEX IO uses semver ranges, and minor/patch updates are backward-compatible. Pinning forces users to manually update your app for every dependency patch.
-
-**Fix**: Use major version ranges with the `x` wildcard:
-
-```json
-{
-  "dependencies": {
-    "vtex.store-components": "3.x",
-    "vtex.styleguide": "9.x"
-  }
-}
-```
+- [ ] Does every code directory (`/node`, `/react`, `/graphql`, etc.) have a matching builder in `manifest.json`?
+- [ ] Are all external hosts and VTEX resources declared in `policies`?
+- [ ] Is the app name kebab-case, vendor matching account, version valid semver?
+- [ ] Does `service.json` exist for apps with the `node` builder?
+- [ ] Are dependencies using major version ranges (`3.x`) instead of exact versions?
+- [ ] Are placeholder values (vendor, app name, policies) replaced with real values?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Manifest](https://developers.vtex.com/docs/guides/vtex-io-documentation-manifest) — Complete reference for all manifest.json fields and their usage
 - [Builders](https://developers.vtex.com/docs/guides/vtex-io-documentation-builders) — Full list of available builders with descriptions and usage examples
@@ -10871,25 +8301,31 @@ A full `manifest.json` for a comprehensive app using multiple builders:
 
 # GraphQL Schemas & Resolvers
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Implementing GraphQL APIs in VTEX IO apps using the `graphql` builder — defining schemas in `.graphql` files, writing resolver functions in TypeScript, configuring `@cacheControl` and `@auth` directives, organizing the `graphql/` directory, and wiring resolvers into the Service class.
+Use this skill when your VTEX IO app needs to expose a GraphQL API — either for frontend React components to query, for other VTEX IO apps to consume, or for implementing custom data aggregation layers over VTEX Commerce APIs.
 
-**When to use it**: When your VTEX IO app needs to expose a GraphQL API — either for frontend React components to query, for other VTEX IO apps to consume, or for implementing custom data aggregation layers over VTEX Commerce APIs.
+- Defining schemas in `.graphql` files in the `/graphql` directory
+- Writing resolver functions in TypeScript in `/node/resolvers/`
+- Configuring `@cacheControl` and `@auth` directives
+- Wiring resolvers into the Service class
 
-**What you'll learn**:
-- How to structure the `graphql/` directory with schemas, directives, and types
-- How to write resolver functions that use `ctx.clients` for data access
-- How to use `@cacheControl` to optimize performance and `@auth` to enforce authentication
-- How to instantiate resolvers in the Service entry point
+Do not use this skill for:
+- Backend service structure and client system (use `vtex-io-service-apps` instead)
+- Manifest and builder configuration (use `vtex-io-app-structure` instead)
+- MasterData integration details (use `vtex-io-masterdata` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- The `graphql` builder processes `.graphql` files in `/graphql` and merges them into a single schema.
+- Split definitions across multiple files for maintainability: `schema.graphql` for root types, `directives.graphql` for directive declarations, `types/*.graphql` for custom types.
+- Use `@cacheControl(scope: PUBLIC, maxAge: SHORT|MEDIUM|LONG)` on all public Query fields. `PUBLIC` = shared CDN cache, `PRIVATE` = per-user cache.
+- Use `@auth` on all Mutations and on Queries that return sensitive or user-specific data.
+- Never use `@cacheControl` on Mutations.
+- Resolver function keys in the Service entry point MUST exactly match the field names in `schema.graphql`.
+- Always use `ctx.clients` in resolvers for data access — never raw HTTP calls.
 
-### Concept 1: GraphQL Builder and Directory Structure
-
-The `graphql` builder processes `.graphql` files in the `/graphql` directory. The recommended structure is:
+Recommended directory structure:
 
 ```text
 graphql/
@@ -10900,98 +8336,27 @@ graphql/
     └── Product.graphql   # One file per type for organization
 ```
 
-The builder merges all `.graphql` files into a single schema. You can split definitions across multiple files and subdirectories for maintainability.
+Built-in directives:
+- **`@cacheControl`**: `scope` (`PUBLIC`/`PRIVATE`), `maxAge` (`SHORT` 30s, `MEDIUM` 5min, `LONG` 1h)
+- **`@auth`**: Enforces valid VTEX authentication token. Without it, unauthenticated users can call the endpoint.
+- **`@smartcache`**: Automatically caches query results in VTEX infrastructure.
 
-### Concept 2: Schema Definition
-
-The `schema.graphql` file defines the root Query and Mutation types — the entry points of your API:
-
-```graphql
-type Query {
-  reviews(productId: String!, limit: Int): [Review]
-    @cacheControl(scope: PUBLIC, maxAge: SHORT)
-
-  review(id: ID!): Review
-    @cacheControl(scope: PUBLIC, maxAge: SHORT)
-}
-
-type Mutation {
-  createReview(review: ReviewInput!): Review @auth
-  deleteReview(id: ID!): Boolean @auth
-}
-```
-
-### Concept 3: Directives — @cacheControl and @auth
-
-VTEX IO provides built-in GraphQL directives:
-
-**`@cacheControl`** — Controls HTTP caching for queries:
-- `scope`: `PUBLIC` (shared CDN cache) or `PRIVATE` (per-user cache)
-- `maxAge`: `SHORT` (30s), `MEDIUM` (5min), `LONG` (1h)
-
-**`@auth`** — Enforces authentication. The resolver only executes if the request includes a valid VTEX authentication token. Without `@auth`, unauthenticated users can call the endpoint.
-
-**`@smartcache`** — Automatically caches query results in VTEX infrastructure.
-
-These directives are declared in `directives.graphql`:
-
-```graphql
-directive @cacheControl(
-  scope: CacheControlScope
-  maxAge: CacheControlMaxAge
-) on FIELD_DEFINITION
-
-enum CacheControlScope {
-  PUBLIC
-  PRIVATE
-}
-
-enum CacheControlMaxAge {
-  SHORT
-  MEDIUM
-  LONG
-}
-
-directive @auth on FIELD_DEFINITION
-directive @smartcache on FIELD_DEFINITION
-```
-
-### Concept 4: Resolvers
-
-Resolvers are TypeScript functions in the `/node/resolvers/` directory that execute when a GraphQL field is queried. Each resolver receives four arguments: `root`, `args`, `ctx`, and `info`. The `ctx` object provides access to `ctx.clients` for data fetching.
-
-Resolvers are instantiated in the Service entry point (`node/index.ts`) inside the `graphql.resolvers` field:
-
-```typescript
-export default new Service({
-  graphql: {
-    resolvers: {
-      Query: {
-        reviews: getReviews,
-        review: getReview,
-      },
-      Mutation: {
-        createReview: createReview,
-        deleteReview: deleteReview,
-      },
-    },
-  },
-})
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Declare the graphql Builder
 
-**Rule**: Any app using `.graphql` schema files MUST declare the `graphql` builder in `manifest.json`. The `graphql` builder interprets the schema and registers it with the VTEX IO runtime.
+Any app using `.graphql` schema files MUST declare the `graphql` builder in `manifest.json`. The `graphql` builder interprets the schema and registers it with the VTEX IO runtime.
 
-**Why**: Without the `graphql` builder declaration, the `/graphql` directory is completely ignored. Schema files will not be processed, resolvers will not be registered, and GraphQL queries will return "schema not found" errors. The app will link without errors but GraphQL will silently not work.
+**Why this matters**
 
-**Detection**: If you see `.graphql` files in a `/graphql` directory but the manifest does not include `"graphql": "1.x"` in `builders`, STOP and add the builder declaration.
+Without the `graphql` builder declaration, the `/graphql` directory is completely ignored. Schema files will not be processed, resolvers will not be registered, and GraphQL queries will return "schema not found" errors. The app will link without errors but GraphQL will silently not work.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `.graphql` files in a `/graphql` directory but the manifest does not include `"graphql": "1.x"` in `builders`, STOP and add the builder declaration.
+
+**Correct**
+
 ```json
 {
   "builders": {
@@ -11001,81 +8366,86 @@ export default new Service({
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "builders": {
     "node": "7.x"
   }
 }
-// Missing "graphql": "1.x" — the /graphql directory with schema files
-// is ignored. GraphQL queries return errors because no schema is
-// registered. The app links successfully, masking the problem.
 ```
+
+Missing `"graphql": "1.x"` — the `/graphql` directory with schema files is ignored. GraphQL queries return errors because no schema is registered. The app links successfully, masking the problem.
 
 ---
 
 ### Constraint: Use @cacheControl on Public Queries
 
-**Rule**: All public-facing Query fields (those fetching data that is not user-specific) MUST include the `@cacheControl` directive with an appropriate `scope` and `maxAge`. Mutations MUST NOT use `@cacheControl`.
+All public-facing Query fields (those fetching data that is not user-specific) MUST include the `@cacheControl` directive with an appropriate `scope` and `maxAge`. Mutations MUST NOT use `@cacheControl`.
 
-**Why**: Without `@cacheControl`, every query hits your resolver on every request — no CDN caching, no edge caching, no shared caching. This leads to unnecessary load on VTEX infrastructure, slow response times for end users, and potential rate limiting. For public product data like reviews or catalog info, caching is critical for performance.
+**Why this matters**
 
-**Detection**: If a Query field returns public data (not user-specific) and does not have `@cacheControl`, warn the developer to add it. If a Mutation has `@cacheControl`, STOP and remove it.
+Without `@cacheControl`, every query hits your resolver on every request — no CDN caching, no edge caching, no shared caching. This leads to unnecessary load on VTEX infrastructure, slow response times, and potential rate limiting. For public product data, caching is critical for performance.
 
-✅ **CORRECT**:
+**Detection**
+
+If a Query field returns public data (not user-specific) and does not have `@cacheControl`, warn the developer to add it. If a Mutation has `@cacheControl`, STOP and remove it.
+
+**Correct**
+
 ```graphql
 type Query {
-  # Public product data — cached at CDN for 30 seconds
   reviews(productId: String!, limit: Int): [Review]
     @cacheControl(scope: PUBLIC, maxAge: SHORT)
 
-  # Public catalog data — cached for 5 minutes
   productMetadata(slug: String!): ProductMetadata
     @cacheControl(scope: PUBLIC, maxAge: MEDIUM)
 
-  # User-specific data — cached per-user only
   myReviews: [Review]
     @cacheControl(scope: PRIVATE, maxAge: SHORT)
     @auth
 }
 
 type Mutation {
-  # Mutations NEVER have @cacheControl
   createReview(review: ReviewInput!): Review @auth
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```graphql
 type Query {
-  # No cache control — every request hits the resolver
   reviews(productId: String!, limit: Int): [Review]
 
-  # Missing @auth on user-specific data
   myReviews: [Review]
 }
 
 type Mutation {
-  # @cacheControl on a mutation — this makes no sense
   createReview(review: ReviewInput!): Review
     @cacheControl(scope: PUBLIC, maxAge: LONG)
 }
 ```
 
+No cache control on queries (every request hits the resolver), missing `@auth` on user-specific data, and `@cacheControl` on a mutation (makes no sense).
+
 ---
 
 ### Constraint: Resolver Names Must Match Schema Fields
 
-**Rule**: Resolver function keys in the Service entry point MUST exactly match the field names defined in `schema.graphql`. The resolver object structure must mirror the GraphQL type hierarchy.
+Resolver function keys in the Service entry point MUST exactly match the field names defined in `schema.graphql`. The resolver object structure must mirror the GraphQL type hierarchy.
 
-**Why**: The GraphQL runtime maps incoming queries to resolver functions by name. If the resolver key does not match the schema field name, the field will resolve to `null` without any error — a silent failure that is extremely difficult to debug.
+**Why this matters**
 
-**Detection**: If a schema field has no matching resolver key (or vice versa), STOP. Cross-check every Query and Mutation field against the resolver registration in `node/index.ts`.
+The GraphQL runtime maps incoming queries to resolver functions by name. If the resolver key does not match the schema field name, the field will resolve to `null` without any error — a silent failure that is extremely difficult to debug.
 
-✅ **CORRECT**:
+**Detection**
+
+If a schema field has no matching resolver key (or vice versa), STOP. Cross-check every Query and Mutation field against the resolver registration in `node/index.ts`.
+
+**Correct**
+
 ```graphql
-# graphql/schema.graphql
 type Query {
   reviews(productId: String!): [Review]
   reviewById(id: ID!): Review
@@ -11096,7 +8466,8 @@ export default new Service({
 })
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // node/index.ts — resolver key "getReviews" does not match schema field "reviews"
 export default new Service({
@@ -11109,14 +8480,13 @@ export default new Service({
     },
   },
 })
-// Both fields will silently resolve to null. No error in logs.
 ```
 
-## Implementation Pattern
+Both fields will silently resolve to null. No error in logs.
 
-**The canonical, recommended way to build a GraphQL API in a VTEX IO app.**
+## Preferred pattern
 
-### Step 1: Add the GraphQL Builder to Manifest
+Add the GraphQL builder to manifest:
 
 ```json
 {
@@ -11127,10 +8497,9 @@ export default new Service({
 }
 ```
 
-### Step 2: Define the Schema
+Define the schema:
 
 ```graphql
-# graphql/schema.graphql
 type Query {
   reviews(productId: String!, limit: Int, offset: Int): ReviewsResponse
     @cacheControl(scope: PUBLIC, maxAge: SHORT)
@@ -11146,10 +8515,9 @@ type Mutation {
 }
 ```
 
-### Step 3: Define Custom Types
+Define custom types:
 
 ```graphql
-# graphql/types/Review.graphql
 type Review {
   id: ID!
   productId: String!
@@ -11175,10 +8543,9 @@ input ReviewInput {
 }
 ```
 
-### Step 4: Declare Directives
+Declare directives:
 
 ```graphql
-# graphql/directives.graphql
 directive @cacheControl(
   scope: CacheControlScope
   maxAge: CacheControlMaxAge
@@ -11199,7 +8566,7 @@ directive @auth on FIELD_DEFINITION
 directive @smartcache on FIELD_DEFINITION
 ```
 
-### Step 5: Implement Resolvers
+Implement resolvers:
 
 ```typescript
 // node/resolvers/reviews.ts
@@ -11284,7 +8651,7 @@ export const mutations = {
 }
 ```
 
-### Step 6: Wire Resolvers into the Service
+Wire resolvers into the Service:
 
 ```typescript
 // node/index.ts
@@ -11313,12 +8680,9 @@ export default new Service<Clients, RecorderState, ParamsContext>({
 })
 ```
 
-### Complete Example
-
 Testing the GraphQL API after linking:
 
 ```graphql
-# Query in GraphiQL at https://{workspace}--{account}.myvtex.com/_v/graphql
 query GetReviews {
   reviews(productId: "12345", limit: 5) {
     data {
@@ -11348,122 +8712,68 @@ mutation CreateReview {
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Defining resolvers without matching schema fields**: The GraphQL runtime only exposes fields defined in the schema. Resolvers without matching fields are silently ignored. Conversely, schema fields without resolvers return `null`. Always define the schema first, then implement matching resolvers with identical names.
+- **Querying external APIs directly in resolvers**: Using `fetch()` or `axios` bypasses the `@vtex/api` client system, losing caching, retries, metrics, and authentication. Always use `ctx.clients` in resolvers.
+- **Missing @auth on mutation endpoints**: Without `@auth`, any anonymous user can call the mutation — a critical security vulnerability. Always add `@auth` to mutations and queries returning sensitive data.
+- **Missing @cacheControl on public queries**: Every request hits the resolver without caching, causing unnecessary load and slow responses. Add appropriate cache directives to all public Query fields.
 
-### Anti-Pattern: Defining Resolvers Without Matching Schema Fields
+## Review checklist
 
-**What happens**: Developers write resolver functions but forget to define the corresponding fields in the GraphQL schema, or use different names.
+- [ ] Is the `graphql` builder declared in `manifest.json`?
+- [ ] Do all public Query fields have `@cacheControl` with appropriate scope and maxAge?
+- [ ] Do all Mutations and sensitive Queries have `@auth`?
+- [ ] Do resolver function keys exactly match schema field names?
+- [ ] Are resolvers using `ctx.clients` for data access (no raw HTTP calls)?
+- [ ] Are directive declarations present in `directives.graphql`?
+- [ ] Is the resolver wired into the Service entry point under `graphql.resolvers`?
 
-**Why it fails**: The GraphQL runtime only exposes fields defined in the schema. Resolvers without matching schema fields are silently ignored. Conversely, schema fields without resolvers return `null`.
+## Related skills
 
-**Fix**: Always define the schema first, then implement matching resolvers. Keep resolver keys identical to schema field names:
-
-```typescript
-// Schema defines: reviews, review, createReview
-// Resolvers must use the same names:
-export default new Service({
-  graphql: {
-    resolvers: {
-      Query: {
-        reviews: reviewsResolver,      // matches schema
-        review: reviewResolver,        // matches schema
-      },
-      Mutation: {
-        createReview: createResolver,  // matches schema
-      },
-    },
-  },
-})
-```
-
----
-
-### Anti-Pattern: Querying External APIs Directly in Resolvers
-
-**What happens**: Developers use `fetch()` or `axios` directly inside resolver functions to call VTEX Commerce APIs or external services.
-
-**Why it fails**: This bypasses the `@vtex/api` client system, losing caching, retries, metrics, and authentication. See the vtex-io-service-apps skill for details on why `ctx.clients` is mandatory.
-
-**Fix**: Always use `ctx.clients` in resolvers. Create custom clients for any external service:
-
-```typescript
-// CORRECT: Using ctx.clients in a resolver
-export const queries = {
-  productDetails: async (_root: unknown, args: { id: string }, ctx: Context) => {
-    return ctx.clients.catalog.getProduct(args.id)
-  },
-}
-```
-
----
-
-### Anti-Pattern: Missing @auth on Mutation Endpoints
-
-**What happens**: Developers create mutation endpoints (create, update, delete) without the `@auth` directive.
-
-**Why it fails**: Without `@auth`, any anonymous user can call the mutation. This means anyone can create, modify, or delete data without authentication — a critical security vulnerability.
-
-**Fix**: Always add `@auth` to mutations and to queries that return sensitive or user-specific data:
-
-```graphql
-type Mutation {
-  createReview(input: ReviewInput!): Review @auth
-  updateReview(id: ID!, input: ReviewInput!): Review @auth
-  deleteReview(id: ID!): Boolean @auth
-}
-```
+- [`vtex-io-service-apps`](../vtex-io-service-apps/skill.md) — Service app fundamentals needed for all GraphQL resolvers
+- [`vtex-io-app-structure`](../vtex-io-app-structure/skill.md) — Manifest and builder configuration that GraphQL depends on
+- [`vtex-io-masterdata`](../vtex-io-masterdata/skill.md) — MasterData integration commonly used as a data source in resolvers
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [GraphQL in VTEX IO](https://developers.vtex.com/docs/guides/graphql-in-vtex-io) — Overview of GraphQL usage in the VTEX IO platform
 - [GraphQL Builder](https://developers.vtex.com/docs/guides/vtex-io-documentation-graphql-builder) — Builder reference for schema processing and directory structure
 - [Developing a GraphQL API in Service Apps](https://developers.vtex.com/docs/guides/developing-a-graphql-api-in-service-apps) — Step-by-step tutorial for building GraphQL APIs
 - [Integrating an App with a GraphQL API](https://developers.vtex.com/docs/guides/integrating-an-app-with-a-graphql-api) — How to consume GraphQL APIs from other VTEX IO apps
+- [GraphQL authorization in IO apps](https://developers.vtex.com/docs/guides/graphql-authorization-in-io-apps) — How to implement and use the `@auth` directive for protected GraphQL operations
+- [Implementing cache in GraphQL APIs for IO apps](https://developers.vtex.com/docs/guides/implementing-cache-in-graphql-apis-for-io-apps) — How to implement and use the `@cacheControl` directive for GraphQL operations
 - [Clients](https://developers.vtex.com/docs/guides/vtex-io-documentation-clients) — How to use ctx.clients in resolvers for data access
 
 ---
 
 # MasterData v2 Integration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Integrating Master Data v2 with VTEX IO apps — defining data entities with JSON Schemas via the `masterdata` builder, performing CRUD operations through the MasterDataClient (`ctx.clients.masterdata`), configuring triggers for automated actions, using search and scroll for data retrieval, and managing schema lifecycle to avoid the 60-schema-per-entity limit.
+Use this skill when your VTEX IO app needs to store custom data (reviews, wishlists, form submissions, configuration records), query or filter that data, or set up automated workflows triggered by data changes.
 
-**When to use it**: When your VTEX IO app needs to store custom data (reviews, wishlists, form submissions, configuration records), query or filter that data, or set up automated workflows triggered by data changes.
+- Defining data entities and JSON Schemas using the `masterdata` builder
+- Performing CRUD operations through MasterDataClient (`ctx.clients.masterdata`)
+- Configuring search, scroll, and indexing for efficient data retrieval
+- Setting up Master Data triggers for automated workflows
+- Managing schema lifecycle to avoid the 60-schema limit
 
-**What you'll learn**:
-- How to define data entities and JSON Schemas using the `masterdata` builder
-- How to perform CRUD operations through MasterDataClient with typed documents
-- How to configure search, scroll, and indexing for efficient data retrieval
-- How to set up Master Data triggers for automated workflows
+Do not use this skill for:
+- General backend service patterns (use `vtex-io-service-apps` instead)
+- GraphQL schema definitions (use `vtex-io-graphql-api` instead)
+- Manifest and builder configuration (use `vtex-io-app-structure` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- A **data entity** is a named collection of documents (analogous to a database table). A **JSON Schema** defines structure, validation, and indexing.
+- When using the `masterdata` builder, entities are defined by folder structure: `masterdata/{entityName}/schema.json`. The builder creates entities named `{vendor}_{appName}_{entityName}`.
+- Use `ctx.clients.masterdata` or `masterDataFor` from `@vtex/clients` for all CRUD operations — never direct REST calls.
+- All fields used in `where` clauses MUST be declared in the schema's `v-indexed` array for efficient querying.
+- Use `searchDocuments` for bounded result sets (known small size, max page size 100). Use `scrollDocuments` for large/unbounded result sets.
+- The `masterdata` builder creates a new schema per app version. Clean up unused schemas to avoid the 60-schema-per-entity hard limit.
 
-### Concept 1: Data Entities and JSON Schemas
-
-A **data entity** is a named collection of documents in Master Data (analogous to a database table). Each document is a JSON object. A **JSON Schema** defines the structure, validation rules, and indexing for documents in a data entity.
-
-When using the `masterdata` builder, entities are defined by folder structure:
-
-```text
-masterdata/
-├── reviews/
-│   └── schema.json       # JSON Schema for the "reviews" entity
-└── wishlists/
-    └── schema.json       # JSON Schema for the "wishlists" entity
-```
-
-The builder creates entities named `{vendor}_{appName}_{entityName}` (e.g., `mycompany_reviewapp_reviews`).
-
-### Concept 2: MasterDataClient
-
-The `MasterDataClient` is available at `ctx.clients.masterdata` in every VTEX IO service app that uses the `@vtex/api` package. It provides typed methods for all CRUD operations:
+MasterDataClient methods:
 
 | Method | Description |
 |--------|-------------|
@@ -11477,14 +8787,8 @@ The `MasterDataClient` is available at `ctx.clients.masterdata` in every VTEX IO
 | `searchDocuments` | Search with filters, pagination, and field selection |
 | `searchDocumentsWithPaginationInfo` | Search with total count metadata |
 | `scrollDocuments` | Iterate over large result sets |
-| `getSchema` | Retrieve a schema definition |
-| `createOrUpdateSchema` | Save a schema to a data entity |
 
-### Concept 3: Indexing and Search
-
-Master Data v2 indexes fields declared in the JSON Schema for efficient querying. To make a field searchable, it must be declared in the schema with `v-indexed: true` or listed in the schema's index configuration.
-
-Search uses a `where` clause syntax:
+Search `where` clause syntax:
 
 ```text
 where: "productId=12345 AND approved=true"
@@ -11492,43 +8796,7 @@ where: "rating>3"
 where: "createdAt between 2025-01-01 AND 2025-12-31"
 ```
 
-For large datasets, use `scrollDocuments` instead of `searchDocuments` to avoid timeout issues and paginate through all results.
-
-### Concept 4: Triggers
-
-Master Data v2 triggers execute automated actions when documents are created, updated, or deleted. Triggers can send emails, call HTTP webhooks, or execute custom actions. In the `masterdata` builder, triggers are defined in JSON files:
-
-```text
-masterdata/
-└── reviews/
-    ├── schema.json
-    └── triggers/
-        └── notify-on-review.json
-```
-
-Trigger configuration:
-
-```json
-{
-  "name": "notify-on-new-review",
-  "active": true,
-  "condition": "status=approved",
-  "action": {
-    "type": "http",
-    "uri": "https://myaccount.myvtex.com/_v/review-notifications",
-    "method": "POST",
-    "headers": {
-      "Content-Type": "application/json"
-    }
-  },
-  "retry": {
-    "times": 3,
-    "delay": { "addMinutes": 5 }
-  }
-}
-```
-
-**Architecture/Data Flow**:
+Architecture:
 
 ```text
 VTEX IO App (node builder)
@@ -11551,19 +8819,22 @@ VTEX IO App (node builder)
       Master Data v2 (reads indexed fields for efficient queries)
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use MasterDataClient — Never Direct REST Calls
 
-**Rule**: All Master Data operations in VTEX IO apps MUST go through the MasterDataClient (`ctx.clients.masterdata`) or the `masterDataFor` factory from `@vtex/clients`. You MUST NOT make direct REST calls to `/api/dataentities/` endpoints.
+All Master Data operations in VTEX IO apps MUST go through the MasterDataClient (`ctx.clients.masterdata`) or the `masterDataFor` factory from `@vtex/clients`. You MUST NOT make direct REST calls to `/api/dataentities/` endpoints.
 
-**Why**: The MasterDataClient handles authentication token injection, request routing, retry logic, caching, and proper error handling. Direct REST calls bypass all of these, requiring you to manually manage auth headers, handle pagination, and implement retry logic. The client also provides TypeScript types and consistent error formatting.
+**Why this matters**
 
-**Detection**: If you see direct HTTP calls to URLs matching `/api/dataentities/`, `api.vtex.com/api/dataentities`, or raw fetch/axios calls targeting Master Data endpoints, warn the developer to use `ctx.clients.masterdata` instead.
+The MasterDataClient handles authentication token injection, request routing, retry logic, caching, and proper error handling. Direct REST calls bypass all of these, requiring manual auth headers, pagination, and retry logic. When the VTEX auth token format changes, direct calls break while the client handles it transparently.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see direct HTTP calls to URLs matching `/api/dataentities/`, `api.vtex.com/api/dataentities`, or raw fetch/axios calls targeting Master Data endpoints, warn the developer to use `ctx.clients.masterdata` instead.
+
+**Correct**
+
 ```typescript
 // Using MasterDataClient through ctx.clients
 export async function getReview(ctx: Context, next: () => Promise<void>) {
@@ -11581,7 +8852,8 @@ export async function getReview(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Direct REST call to Master Data — bypasses client infrastructure
 import axios from 'axios'
@@ -11610,15 +8882,19 @@ export async function getReview(ctx: Context, next: () => Promise<void>) {
 
 ### Constraint: Define JSON Schemas for All Data Entities
 
-**Rule**: Every data entity your app uses MUST have a corresponding JSON Schema, either via the `masterdata` builder (recommended) or created via the Master Data API before the app is deployed.
+Every data entity your app uses MUST have a corresponding JSON Schema, either via the `masterdata` builder (recommended) or created via the Master Data API before the app is deployed.
 
-**Why**: Without a schema, Master Data stores documents as unstructured JSON. This means no field validation, no indexing (making search extremely slow on large datasets), no type safety, and no trigger support. Queries on unindexed fields perform full scans, which can time out or hit rate limits.
+**Why this matters**
 
-**Detection**: If the app creates or searches documents in a data entity but no JSON Schema exists for that entity (either in the `masterdata/` builder directory or via API), warn the developer to define a schema.
+Without a schema, Master Data stores documents as unstructured JSON. This means no field validation, no indexing (making search extremely slow on large datasets), no type safety, and no trigger support. Queries on unindexed fields perform full scans, which can time out or hit rate limits.
 
-✅ **CORRECT**:
+**Detection**
+
+If the app creates or searches documents in a data entity but no JSON Schema exists for that entity (either in the `masterdata/` builder directory or via API), warn the developer to define a schema.
+
+**Correct**
+
 ```json
-// masterdata/reviews/schema.json
 {
   "$schema": "http://json-schema.org/schema#",
   "title": "review-schema-v1",
@@ -11657,7 +8933,8 @@ export async function getReview(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Saving documents without any schema — no validation, no indexing
 await ctx.clients.masterdata.createDocument({
@@ -11682,13 +8959,18 @@ await ctx.clients.masterdata.searchDocuments({
 
 ### Constraint: Manage Schema Versions to Avoid the 60-Schema Limit
 
-**Rule**: Master Data v2 data entities have a limit of 60 schemas per entity. When using the `masterdata` builder, each app version linked or installed creates a new schema. You MUST delete unused schemas regularly.
+Master Data v2 data entities have a limit of 60 schemas per entity. When using the `masterdata` builder, each app version linked or installed creates a new schema. You MUST delete unused schemas regularly.
 
-**Why**: Once the 60-schema limit is reached, the `masterdata` builder cannot create new schemas, and linking or installing new app versions will fail. This is a hard platform limit that cannot be increased.
+**Why this matters**
 
-**Detection**: If the app has been through many link/install cycles, warn the developer to check and clean up old schemas using the [Delete Schema API](https://developers.vtex.com/docs/api-reference/master-data-api-v2#delete-/api/dataentities/-dataEntityName-/schemas/-schemaName-).
+Once the 60-schema limit is reached, the `masterdata` builder cannot create new schemas, and linking or installing new app versions will fail. This is a hard platform limit that cannot be increased.
 
-✅ **CORRECT**:
+**Detection**
+
+If the app has been through many link/install cycles, warn the developer to check and clean up old schemas using the Delete Schema API.
+
+**Correct**
+
 ```bash
 # Periodically clean up unused schemas
 # List schemas for the entity
@@ -11702,22 +8984,20 @@ curl -X DELETE "https://{account}.vtexcommercestable.com.br/api/dataentities/rev
   -H "X-VTEX-API-AppToken: {appToken}"
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```text
-# Never cleaning up schemas during development.
-# After 60 link cycles, the builder fails:
-# "Error: Maximum number of schemas reached for entity 'reviews'"
-# The app cannot be linked or installed until old schemas are deleted.
+Never cleaning up schemas during development.
+After 60 link cycles, the builder fails:
+"Error: Maximum number of schemas reached for entity 'reviews'"
+The app cannot be linked or installed until old schemas are deleted.
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to integrate Master Data v2 in a VTEX IO app.**
-
-### Step 1: Add the masterdata Builder and Policies
+Add the masterdata builder and policies:
 
 ```json
-// manifest.json
 {
   "builders": {
     "node": "7.x",
@@ -11739,10 +9019,9 @@ curl -X DELETE "https://{account}.vtexcommercestable.com.br/api/dataentities/rev
 }
 ```
 
-### Step 2: Define Data Entity Schemas
+Define data entity schemas:
 
 ```json
-// masterdata/reviews/schema.json
 {
   "$schema": "http://json-schema.org/schema#",
   "title": "review-schema-v1",
@@ -11786,24 +9065,13 @@ curl -X DELETE "https://{account}.vtexcommercestable.com.br/api/dataentities/rev
 }
 ```
 
-### Step 3: Generate TypeScript Typings
-
-```bash
-# At the root of your project
-vtex setup -i
-
-# This generates types based on your schema that you can import:
-# import type { Review } from 'myvendor.myapp'
-```
-
-### Step 4: Set Up the Client with masterDataFor
+Set up the client with `masterDataFor`:
 
 ```typescript
 // node/clients/index.ts
 import { IOClients } from '@vtex/api'
 import { masterDataFor } from '@vtex/clients'
 
-// Import the generated type from the masterdata builder
 interface Review {
   id: string
   productId: string
@@ -11823,7 +9091,7 @@ export class Clients extends IOClients {
 }
 ```
 
-### Step 5: Implement CRUD Operations
+Implement CRUD operations:
 
 ```typescript
 // node/resolvers/reviews.ts
@@ -11884,10 +9152,9 @@ export const mutations = {
 }
 ```
 
-### Step 6: Configure Triggers (Optional)
+Configure triggers (optional):
 
 ```json
-// masterdata/reviews/triggers/notify-moderator.json
 {
   "name": "notify-moderator-on-new-review",
   "active": true,
@@ -11906,9 +9173,7 @@ export const mutations = {
 }
 ```
 
-### Complete Example
-
-Full CRUD service for product reviews with Master Data v2:
+Wire into Service:
 
 ```typescript
 // node/index.ts
@@ -11937,87 +9202,24 @@ export default new Service<Clients, RecorderState, ParamsContext>({
 })
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Direct REST calls to /api/dataentities/**: Using `axios` or `fetch` to call Master Data endpoints bypasses the client infrastructure — no auth, no caching, no retries. Use `ctx.clients.masterdata` or `masterDataFor` instead.
+- **Searching without indexed fields**: Queries on non-indexed fields trigger full document scans. For large datasets, this causes timeouts and rate limit errors. Ensure all `where` clause fields are in the schema's `v-indexed` array.
+- **Not paginating search results**: Master Data v2 has a maximum page size of 100 documents. Requesting more silently returns only up to the limit. Use proper pagination or `scrollDocuments` for large result sets.
+- **Ignoring the 60-schema limit**: Each app version linked/installed creates a new schema. After 60 link cycles, the builder fails. Periodically clean up unused schemas via the Delete Schema API.
 
-### Anti-Pattern: Direct REST Calls to /api/dataentities/
+## Review checklist
 
-**What happens**: Developers use `axios` or `fetch` to call Master Data v2 REST endpoints directly, bypassing the MasterDataClient.
-
-**Why it fails**: Direct calls require manual auth header management, manual pagination, no built-in retry logic, and no caching. When the VTEX auth token format changes, direct calls break while the client handles it transparently.
-
-**Fix**: Use `ctx.clients.masterdata` or `masterDataFor` from `@vtex/clients`:
-
-```typescript
-// Instead of direct API calls:
-const reviews = await ctx.clients.reviews.search(
-  { page: 1, pageSize: 10 },
-  ['id', 'productId', 'rating', 'title'],
-  '',
-  `productId=${productId}`
-)
-```
-
----
-
-### Anti-Pattern: Searching Without Indexed Fields
-
-**What happens**: Developers query Master Data using `where` clauses on fields that are not indexed in the JSON Schema.
-
-**Why it fails**: Queries on non-indexed fields trigger full document scans. For data entities with thousands of documents, this causes timeouts and rate limit errors. The query may return partial results or fail entirely.
-
-**Fix**: Ensure all fields used in `where` clauses are declared in the schema's `v-indexed` array:
-
-```json
-{
-  "v-indexed": ["productId", "author", "approved", "rating", "createdAt"]
-}
-```
-
-Then queries on these fields will use the index:
-
-```typescript
-// Fast — productId and approved are indexed
-await ctx.clients.reviews.search(
-  { page: 1, pageSize: 10 },
-  ['id', 'rating', 'title'],
-  '',
-  'productId=12345 AND approved=true'
-)
-```
-
----
-
-### Anti-Pattern: Not Paginating Search Results
-
-**What happens**: Developers call `searchDocuments` requesting all documents at once (e.g., `pageSize: 1000`) instead of paginating.
-
-**Why it fails**: Master Data v2 has a maximum page size of 100 documents. Requesting more silently returns only up to the limit. For large datasets, use `scrollDocuments` to iterate through all results without hitting API limits.
-
-**Fix**: Use proper pagination or scroll for large result sets:
-
-```typescript
-// For bounded result sets (known small size)
-const reviews = await ctx.clients.reviews.search(
-  { page: 1, pageSize: 50 },
-  ['id', 'rating', 'title'],
-  '',
-  `productId=${productId}`
-)
-
-// For large/unbounded result sets — use scroll
-const allReviews = await ctx.clients.masterdata.scrollDocuments<Review>({
-  dataEntity: 'reviews',
-  fields: ['id', 'productId', 'rating'],
-  where: 'approved=true',
-  size: 100,  // Batch size per scroll request
-})
-```
+- [ ] Is the `masterdata` builder declared in `manifest.json`?
+- [ ] Do all data entities have JSON Schemas with proper field definitions?
+- [ ] Are all `where` clause fields declared in `v-indexed`?
+- [ ] Are CRUD operations using `ctx.clients.masterdata` or `masterDataFor` (no direct REST calls)?
+- [ ] Is pagination properly handled (max 100 per page, scroll for large sets)?
+- [ ] Is there a plan for schema cleanup to avoid the 60-schema limit?
+- [ ] Are required policies (`outbound-access`, `ADMIN_DS`) declared in the manifest?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Creating a Master Data v2 CRUD App](https://developers.vtex.com/docs/guides/create-master-data-crud-app) — Complete guide for building Master Data apps with the masterdata builder
 - [Working with JSON Schemas in Master Data v2](https://developers.vtex.com/docs/guides/working-with-json-schemas-in-master-data-v2) — Schema structure, validation, and indexing configuration
@@ -12030,116 +9232,33 @@ const allReviews = await ctx.clients.masterdata.scrollDocuments<Review>({
 
 # Frontend React Components & Hooks
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Building VTEX IO frontend apps using the `react` builder — creating React components that integrate with Store Framework as theme blocks, configuring `interfaces.json` to map blocks to components, setting up `contentSchemas.json` for Site Editor customization, using VTEX Styleguide for admin apps, and applying `css-handles` for safe storefront styling.
+Use this skill when building VTEX IO frontend apps using the `react` builder — creating React components that integrate with Store Framework as theme blocks, configuring `interfaces.json`, setting up `contentSchemas.json` for Site Editor, and applying styling patterns.
 
-**When to use it**: When developing custom storefront components (product displays, forms, banners), admin panel interfaces, pixel/tracking apps, or any VTEX IO app that renders UI with React.
+- Creating custom storefront components (product displays, forms, banners)
+- Building admin panel interfaces with VTEX Styleguide
+- Registering components as Store Framework blocks
+- Exposing component props in Site Editor via `contentSchemas.json`
+- Applying `css-handles` for safe storefront styling
 
-**What you'll learn**:
-- How to create React components in the `/react` directory and export them correctly
-- How to register components as Store Framework blocks via `interfaces.json`
-- How to expose component props in Site Editor via `contentSchemas.json`
-- How to use VTEX Styleguide for admin UIs and css-handles for storefront styling
+Do not use this skill for:
+- Backend service implementation (use `vtex-io-service-apps` instead)
+- GraphQL schema and resolver development (use `vtex-io-graphql-api` instead)
+- Manifest and builder configuration (use `vtex-io-app-structure` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Every visible storefront element is a **block**. Blocks are declared in theme JSON and map to React components via **interfaces**.
+- `interfaces.json` (in `/store`) maps block names to React component files: `"component"` is the file name in `/react` (without extension), `"allowed"` lists child blocks, `"composition"` controls how children work (`"children"` or `"blocks"`).
+- Each exported component MUST have a root-level file in `/react` that re-exports it. The builder resolves `"component": "ProductReviews"` to `react/ProductReviews.tsx`.
+- For **storefront** components, use `vtex.css-handles` for styling (not inline styles, not global CSS).
+- For **admin** components, use `vtex.styleguide` — the official VTEX Admin component library. No third-party UI libraries.
+- Use `contentSchemas.json` in `/store` to make component props editable in Site Editor (JSON Schema format).
+- Use `react-intl` and the `messages` builder for i18n — never hardcode user-facing strings.
+- Fetch data via GraphQL queries (`useQuery` from `react-apollo`), never via direct API calls from the browser.
 
-### Concept 1: Store Framework Blocks and Interfaces
-
-In VTEX Store Framework, every visible element is a **block**. Blocks are declared in JSON theme files and map to React components via an **interface**. The `interfaces.json` file (in the `/store` directory) establishes this mapping:
-
-```json
-{
-  "product-reviews": {
-    "component": "ProductReviews",
-    "allowed": ["product-review-item"],
-    "composition": "children"
-  }
-}
-```
-
-- `component`: Name of the React component file in `/react` (without extension)
-- `allowed`: Which child blocks can be nested inside this block
-- `composition`: How children are composed — `"children"` (explicit), `"blocks"` (implicit)
-- `render`: Rendering strategy — `"client"` (default), `"server"`, `"lazy"`
-
-### Concept 2: React Directory Structure
-
-The `/react` directory contains your React components. Each exported component must have a corresponding file at the root of `/react` that re-exports it:
-
-```text
-react/
-├── ProductReviews.tsx          # Root export file (re-exports the component)
-├── components/
-│   ├── ProductReviews/
-│   │   ├── index.tsx           # Actual component implementation
-│   │   ├── ReviewItem.tsx
-│   │   └── StarRating.tsx
-│   └── shared/
-│       └── LoadingSpinner.tsx
-├── hooks/
-│   └── useReviews.ts
-├── typings/
-│   └── vtex.d.ts
-└── package.json
-```
-
-The root-level file (`react/ProductReviews.tsx`) is what the store builder resolves when it reads `"component": "ProductReviews"` from `interfaces.json`.
-
-### Concept 3: Site Editor Integration
-
-Site Editor allows store administrators to edit component properties through the VTEX Admin without touching code. To make your component editable, define a `contentSchemas.json` file in the `/store` directory:
-
-```json
-{
-  "definitions": {
-    "ProductReviews": {
-      "type": "object",
-      "properties": {
-        "title": {
-          "type": "string",
-          "title": "Section Title",
-          "default": "Customer Reviews"
-        },
-        "showAverage": {
-          "type": "boolean",
-          "title": "Show average rating",
-          "default": true
-        },
-        "maxReviews": {
-          "type": "number",
-          "title": "Maximum reviews to display",
-          "default": 10,
-          "enum": [5, 10, 20, 50]
-        }
-      }
-    }
-  }
-}
-```
-
-These schemas use JSON Schema format and map directly to the component's props.
-
-### Concept 4: CSS Handles and VTEX Styleguide
-
-For **storefront** components, use `vtex.css-handles` to expose CSS class names that store theme developers can customize:
-
-```typescript
-import { useCssHandles } from 'vtex.css-handles'
-
-const CSS_HANDLES = ['container', 'title', 'reviewList', 'reviewItem'] as const
-
-function ProductReviews() {
-  const handles = useCssHandles(CSS_HANDLES)
-  return <div className={handles.container}>...</div>
-}
-```
-
-For **admin** components, use [VTEX Styleguide](https://styleguide.vtex.com/) — the official component library for VTEX Admin UIs. It provides buttons, tables, modals, inputs, and other pre-built components that follow VTEX design standards.
-
-**Architecture/Data Flow**:
+Architecture:
 
 ```text
 Store Theme (JSON blocks)
@@ -12156,21 +9275,23 @@ react/ProductReviews.tsx → React component renders
         └── useProduct() / useOrderForm() → Store Framework context hooks
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Declare Interfaces for All Storefront Blocks
 
-**Rule**: Every React component that should be usable as a Store Framework block MUST have a corresponding entry in `store/interfaces.json`. Without the interface declaration, the block cannot be referenced in theme JSON files.
+Every React component that should be usable as a Store Framework block MUST have a corresponding entry in `store/interfaces.json`. Without the interface declaration, the block cannot be referenced in theme JSON files.
 
-**Why**: The store builder resolves block names to React components through `interfaces.json`. If a component exists in `/react` but has no interface, it is invisible to Store Framework. Theme developers cannot use it in their store configurations, and it will not render on the storefront.
+**Why this matters**
 
-**Detection**: If a React component in `/react` is intended for storefront use but has no matching entry in `store/interfaces.json`, warn the developer. The component will compile but never render.
+The store builder resolves block names to React components through `interfaces.json`. If a component has no interface, it is invisible to Store Framework and will not render on the storefront.
 
-✅ **CORRECT**:
+**Detection**
+
+If a React component in `/react` is intended for storefront use but has no matching entry in `store/interfaces.json`, warn the developer. The component will compile but never render.
+
+**Correct**
+
 ```json
-// store/interfaces.json
 {
   "product-reviews": {
     "component": "ProductReviews",
@@ -12190,7 +9311,8 @@ import ProductReviews from './components/ProductReviews'
 export default ProductReviews
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```tsx
 // react/ProductReviews.tsx exists but NO store/interfaces.json entry
 // The component compiles fine but cannot be used in any theme.
@@ -12205,13 +9327,18 @@ export default ProductReviews
 
 ### Constraint: Use VTEX Styleguide for Admin UIs
 
-**Rule**: Admin panel components (apps using the `admin` builder) MUST use VTEX Styleguide (`vtex.styleguide`) for UI elements. You MUST NOT use third-party UI libraries like Material UI (`@material-ui`), Chakra UI (`@chakra-ui/react`), or Ant Design (`antd`) in admin apps.
+Admin panel components (apps using the `admin` builder) MUST use VTEX Styleguide (`vtex.styleguide`) for UI elements. You MUST NOT use third-party UI libraries like Material UI, Chakra UI, or Ant Design in admin apps.
 
-**Why**: VTEX Admin has a consistent design language enforced by Styleguide. Third-party UI libraries produce inconsistent visuals, may conflict with the Admin's global CSS, and add unnecessary bundle size. Apps submitted to the VTEX App Store with non-Styleguide admin UIs will fail review.
+**Why this matters**
 
-**Detection**: If you see imports from `@material-ui`, `@chakra-ui/react`, `@chakra-ui`, `antd`, or `@ant-design` in an admin app, warn the developer to use `vtex.styleguide` instead.
+VTEX Admin has a consistent design language enforced by Styleguide. Third-party UI libraries produce inconsistent visuals, may conflict with the Admin's global CSS, and add unnecessary bundle size. Apps submitted to the VTEX App Store with non-Styleguide admin UIs will fail review.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see imports from `@material-ui`, `@chakra-ui/react`, `@chakra-ui`, `antd`, or `@ant-design` in an admin app, warn the developer to use `vtex.styleguide` instead.
+
+**Correct**
+
 ```tsx
 // react/admin/ReviewModeration.tsx
 import React, { useState } from 'react'
@@ -12268,7 +9395,8 @@ function ReviewModeration() {
 export default ReviewModeration
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```tsx
 // react/admin/ReviewModeration.tsx
 import React from 'react'
@@ -12292,13 +9420,18 @@ function ReviewModeration() {
 
 ### Constraint: Export Components from react/ Root Level
 
-**Rule**: Every Store Framework block component MUST have a root-level export file in the `/react` directory that matches the `component` value in `interfaces.json`. The actual implementation can live in subdirectories, but the root file must exist.
+Every Store Framework block component MUST have a root-level export file in the `/react` directory that matches the `component` value in `interfaces.json`. The actual implementation can live in subdirectories, but the root file must exist.
 
-**Why**: The react builder resolves components by looking for files at the root of `/react`. If `interfaces.json` declares `"component": "ProductReviews"`, the builder looks for `react/ProductReviews.tsx` (or `.ts`, `.js`, `.jsx`). Without this root export file, the component will not be found and the block will fail to render.
+**Why this matters**
 
-**Detection**: If `interfaces.json` references a component name that does not have a matching file at the root of `/react`, STOP and create the export file.
+The react builder resolves components by looking for files at the root of `/react`. If `interfaces.json` declares `"component": "ProductReviews"`, the builder looks for `react/ProductReviews.tsx`. Without this root export file, the component will not be found and the block will fail to render.
 
-✅ **CORRECT**:
+**Detection**
+
+If `interfaces.json` references a component name that does not have a matching file at the root of `/react`, STOP and create the export file.
+
+**Correct**
+
 ```tsx
 // react/ProductReviews.tsx — root-level export file
 import ProductReviews from './components/ProductReviews/index'
@@ -12331,21 +9464,18 @@ function ProductReviews({ title, maxReviews }: Props) {
 export default ProductReviews
 ```
 
-❌ **WRONG**:
-```tsx
-// react/components/ProductReviews/index.tsx exists but
-// react/ProductReviews.tsx does NOT exist.
-// The builder cannot find the component.
-// Error: "Could not find component ProductReviews"
+**Wrong**
+
+```text
+react/components/ProductReviews/index.tsx exists but
+react/ProductReviews.tsx does NOT exist.
+The builder cannot find the component.
+Error: "Could not find component ProductReviews"
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to build a VTEX IO React storefront component.**
-
-### Step 1: Create the React Component
-
-Build your component inside a subdirectory for organization:
+Create the React component inside a subdirectory:
 
 ```tsx
 // react/components/ProductReviews/index.tsx
@@ -12425,7 +9555,7 @@ function ProductReviews({
 export default ProductReviews
 ```
 
-### Step 2: Create the Root Export File
+Root export file:
 
 ```tsx
 // react/ProductReviews.tsx
@@ -12434,10 +9564,9 @@ import ProductReviews from './components/ProductReviews'
 export default ProductReviews
 ```
 
-### Step 3: Define the Block Interface
+Block interface:
 
 ```json
-// store/interfaces.json
 {
   "product-reviews": {
     "component": "ProductReviews",
@@ -12448,10 +9577,9 @@ export default ProductReviews
 }
 ```
 
-### Step 4: Add Site Editor Schema
+Site Editor schema:
 
 ```json
-// store/contentSchemas.json
 {
   "definitions": {
     "ProductReviews": {
@@ -12480,12 +9608,9 @@ export default ProductReviews
 }
 ```
 
-### Complete Example
-
 Using the component in a Store Framework theme:
 
 ```json
-// store-theme blocks.json
 {
   "store.product": {
     "children": [
@@ -12506,89 +9631,24 @@ Using the component in a Store Framework theme:
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Importing third-party UI libraries for admin apps**: Using `@material-ui/core`, `@chakra-ui/react`, or `antd` conflicts with VTEX Admin's global CSS, produces inconsistent visuals, and will fail App Store review. Use `vtex.styleguide` instead.
+- **Directly calling APIs from React components**: Using `fetch()` or `axios` exposes authentication tokens to the client and bypasses CORS restrictions. Use GraphQL queries that resolve server-side via `useQuery` from `react-apollo`.
+- **Hardcoded strings without i18n**: Components with hardcoded strings only work in one language. Use the `messages` builder and `react-intl` for internationalization.
+- **Missing root-level export file**: If `interfaces.json` references `"component": "ProductReviews"` but `react/ProductReviews.tsx` doesn't exist, the block silently fails to render.
 
-### Anti-Pattern: Importing Third-Party UI Libraries for Admin Apps
+## Review checklist
 
-**What happens**: Developers install `@material-ui/core`, `@chakra-ui/react`, or `antd` to build admin panels instead of using VTEX Styleguide.
-
-**Why it fails**: Third-party UI libraries conflict with the VTEX Admin's global CSS, produce an inconsistent look and feel, significantly increase bundle size, and will cause the app to fail VTEX App Store review.
-
-**Fix**: Use `vtex.styleguide` components. Declare the dependency in `manifest.json`:
-
-```json
-{
-  "dependencies": {
-    "vtex.styleguide": "9.x"
-  }
-}
-```
-
-Then import components directly:
-
-```tsx
-import { Button, Table, Modal, Input, Layout, PageHeader } from 'vtex.styleguide'
-```
-
----
-
-### Anti-Pattern: Directly Calling APIs from React Components
-
-**What happens**: Developers use `fetch()` or `axios` inside React components to call VTEX Commerce APIs directly from the browser.
-
-**Why it fails**: Browser-side API calls expose authentication tokens to the client, bypass CORS restrictions, and cannot use server-side caching. VTEX Commerce APIs require server-side authentication that is not available in the browser context.
-
-**Fix**: Use GraphQL queries that resolve on the server side. Create a GraphQL schema in your app's `/graphql` directory with resolvers in `/node/resolvers` that use `ctx.clients` to access VTEX APIs:
-
-```tsx
-// Instead of fetch() in the component:
-import { useQuery } from 'react-apollo'
-import GET_REVIEWS from '../graphql/getReviews.graphql'
-
-function ProductReviews() {
-  const { data, loading } = useQuery(GET_REVIEWS, {
-    variables: { productId: '123' },
-  })
-  // ...
-}
-```
-
----
-
-### Anti-Pattern: Hardcoded Strings Without i18n
-
-**What happens**: Developers hardcode user-facing strings in React components instead of using the `messages` builder for internationalization.
-
-**Why it fails**: The component will only work in one language. VTEX stores are often multi-locale, and hardcoded strings cannot be translated by the platform's automatic translation system or overridden via Site Editor.
-
-**Fix**: Use the `messages` builder and `react-intl`:
-
-```tsx
-import { useIntl } from 'react-intl'
-
-function ProductReviews() {
-  const intl = useIntl()
-  const title = intl.formatMessage({ id: 'store/product-reviews.title' })
-  return <h2>{title}</h2>
-}
-```
-
-```json
-// messages/en.json
-{
-  "store/product-reviews.title": "Customer Reviews"
-}
-// messages/pt.json
-{
-  "store/product-reviews.title": "Avaliações de Clientes"
-}
-```
+- [ ] Does every storefront block have a matching entry in `store/interfaces.json`?
+- [ ] Does every `interfaces.json` component have a root-level export file in `/react`?
+- [ ] Are admin apps using `vtex.styleguide` (no third-party UI libraries)?
+- [ ] Are storefront components using `css-handles` for styling?
+- [ ] Is data fetched via GraphQL (`useQuery`), not direct API calls?
+- [ ] Are user-facing strings using `react-intl` and the `messages` builder?
+- [ ] Is `contentSchemas.json` defined for Site Editor-editable props?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Developing Custom Storefront Components](https://developers.vtex.com/docs/guides/vtex-io-documentation-developing-custom-storefront-components) — Guide for building Store Framework components
 - [Interfaces](https://developers.vtex.com/docs/guides/vtex-io-documentation-interface) — How interfaces map blocks to React components
@@ -12602,60 +9662,32 @@ function ProductReviews() {
 
 # Backend Service Apps & API Clients
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Building VTEX IO backend services using the `node` builder — the Service class, middleware pattern, client system (JanusClient, ExternalClient, MasterDataClient), IOClients registry, service.json route configuration, event handling, and the mandatory `ctx.clients` access pattern.
+Use this skill when developing a VTEX IO app that needs backend logic — REST API routes, GraphQL resolvers, event handlers, scheduled tasks, or integrations with VTEX Commerce APIs and external services.
 
-**When to use it**: When developing a VTEX IO app that needs backend logic — REST API routes, GraphQL resolvers, event handlers, scheduled tasks, or integrations with VTEX Commerce APIs and external services.
+- Building the Service entry point (`node/index.ts`) with typed context, clients, and state
+- Creating and registering custom clients extending JanusClient or ExternalClient
+- Using `ctx.clients` to access clients with built-in caching, retry, and metrics
+- Configuring routes and middleware chains in service.json
 
-**What you'll learn**:
-- How to structure the Service entry point with typed context, clients, and state
-- How to create and register custom clients extending JanusClient or ExternalClient
-- How to use `ctx.clients` to access clients with built-in caching, retry, and metrics
-- How to configure routes and middleware chains in service.json
+Do not use this skill for:
+- Manifest and builder configuration (use `vtex-io-app-structure` instead)
+- GraphQL schema definitions (use `vtex-io-graphql-api` instead)
+- React component development (use `vtex-io-react-apps` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- The Service class (`node/index.ts`) is the entry point for every VTEX IO backend app. It receives clients, routes (with middleware chains), GraphQL resolvers, and event handlers.
+- Every middleware, resolver, and event handler receives `ctx` with: `ctx.clients` (registered clients), `ctx.state` (mutable per-request state), `ctx.vtex` (auth tokens, account info), `ctx.body` (request/response body).
+- Use `JanusClient` for VTEX internal APIs (base URL: `https://{account}.vtexcommercestable.com.br`).
+- Use `ExternalClient` for non-VTEX APIs (any URL you specify).
+- Use `AppClient` for routes exposed by other VTEX IO apps.
+- Use `MasterDataClient` for Master Data v2 CRUD operations.
+- Register custom clients by extending `IOClients` — each client is lazily instantiated on first access via `this.getOrSet()`.
+- Keep clients as thin data-access wrappers. Put business logic in middlewares or service functions.
 
-### Concept 1: The Service Class
-
-The Service class is the entry point for every VTEX IO backend app (`node/index.ts`). It receives a configuration object defining clients, routes (with middleware chains), GraphQL resolvers, and event handlers. The Service class wires everything together and registers it with the VTEX IO runtime.
-
-```typescript
-import type { ParamsContext, RecorderState, ServiceContext } from '@vtex/api'
-import { Service } from '@vtex/api'
-
-export default new Service<Clients, RecorderState, ParamsContext>({
-  clients: {
-    implementation: Clients,
-    options: {
-      default: {
-        retries: 2,
-        timeout: 3000,
-      },
-    },
-  },
-  routes: { ... },
-  graphql: { resolvers: { ... } },
-  events: { ... },
-})
-```
-
-### Concept 2: Context, State, and Clients
-
-Every middleware, resolver, and event handler receives a `ctx` object of type `ServiceContext`. This context provides:
-
-- `ctx.clients` — Access to all registered clients (VTEX native + custom)
-- `ctx.state` — Mutable state shared across the middleware chain for a single request
-- `ctx.vtex` — Authentication tokens, account info, workspace, request metadata
-- `ctx.body` — Request/response body
-
-The generic type parameters `Service<Clients, State, Context>` allow full TypeScript type safety across your entire app.
-
-### Concept 3: Client Hierarchy
-
-VTEX IO provides a hierarchy of base client classes in `@vtex/api`:
+Client hierarchy:
 
 | Class | Use Case | Base URL |
 |-------|----------|----------|
@@ -12665,24 +9697,7 @@ VTEX IO provides a hierarchy of base client classes in `@vtex/api`:
 | `InfraClient` | Access VTEX IO infrastructure services | Internal |
 | `MasterDataClient` | Access Master Data v2 CRUD operations | VTEX API |
 
-All clients extend a common base that provides: disk/memory caching, automatic retries with exponential backoff, timeout configuration, native metrics collection, and billing tracking.
-
-### Concept 4: IOClients Registry
-
-Custom clients are registered by extending the `IOClients` class from `@vtex/api`. This class acts as a dependency injection container — each client is lazily instantiated on first access and reused across the request lifecycle.
-
-```typescript
-import { IOClients } from '@vtex/api'
-import { MyExternalClient } from './myExternalClient'
-
-export class Clients extends IOClients {
-  public get myExternal() {
-    return this.getOrSet('myExternal', MyExternalClient)
-  }
-}
-```
-
-**Architecture/Data Flow**:
+Architecture:
 
 ```text
 Request → VTEX IO Runtime → Service
@@ -12697,19 +9712,22 @@ Request → VTEX IO Runtime → Service
                     External Service / VTEX API
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use @vtex/api Clients — Never Raw HTTP Libraries
 
-**Rule**: All HTTP communication from a VTEX IO service app MUST go through `@vtex/api` clients (JanusClient, ExternalClient, AppClient, or native clients from `@vtex/clients`). You MUST NOT use `axios`, `fetch`, `got`, `node-fetch`, or any other raw HTTP library.
+All HTTP communication from a VTEX IO service app MUST go through `@vtex/api` clients (JanusClient, ExternalClient, AppClient, or native clients from `@vtex/clients`). You MUST NOT use `axios`, `fetch`, `got`, `node-fetch`, or any other raw HTTP library.
 
-**Why**: VTEX IO clients provide automatic authentication header injection, built-in caching (disk and memory), retry with exponential backoff, timeout management, native metrics and billing tracking, and proper error handling. Raw HTTP libraries bypass all of these, leading to missing auth tokens, no caching, no retries, no metrics, and potential billing issues. Additionally, outbound traffic from VTEX IO is firewalled — only `@vtex/api` clients properly route through the infrastructure.
+**Why this matters**
 
-**Detection**: If you see `import axios from 'axios'`, `import fetch from 'node-fetch'`, `import got from 'got'`, `require('node-fetch')`, or any direct `fetch()` call in a VTEX IO service app, STOP. Replace with a proper client extending JanusClient or ExternalClient.
+VTEX IO clients provide automatic authentication header injection, built-in caching (disk and memory), retry with exponential backoff, timeout management, native metrics and billing tracking, and proper error handling. Raw HTTP libraries bypass all of these. Additionally, outbound traffic from VTEX IO is firewalled — only `@vtex/api` clients properly route through the infrastructure.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `import axios from 'axios'`, `import fetch from 'node-fetch'`, `import got from 'got'`, `require('node-fetch')`, or any direct `fetch()` call in a VTEX IO service app, STOP. Replace with a proper client extending JanusClient or ExternalClient.
+
+**Correct**
+
 ```typescript
 import type { InstanceOptions, IOContext } from '@vtex/api'
 import { ExternalClient } from '@vtex/api'
@@ -12733,7 +9751,8 @@ export class WeatherClient extends ExternalClient {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 import axios from 'axios'
 
@@ -12752,13 +9771,18 @@ export async function getForecast(city: string): Promise<Forecast> {
 
 ### Constraint: Access Clients via ctx.clients — Never Instantiate Directly
 
-**Rule**: Clients MUST always be accessed through `ctx.clients.{clientName}` in middlewares, resolvers, and event handlers. You MUST NOT instantiate client classes directly with `new`.
+Clients MUST always be accessed through `ctx.clients.{clientName}` in middlewares, resolvers, and event handlers. You MUST NOT instantiate client classes directly with `new`.
 
-**Why**: The IOClients registry manages client lifecycle, ensuring proper initialization with the current request's IOContext (account, workspace, auth tokens). Direct instantiation creates clients without authentication context, without caching configuration, and without connection to the metrics pipeline. It also prevents the runtime from managing memory and connection pooling.
+**Why this matters**
 
-**Detection**: If you see `new MyClient(...)` or `new ExternalClient(...)` inside a middleware or resolver, STOP. The client should be registered in the Clients class and accessed via `ctx.clients`.
+The IOClients registry manages client lifecycle, ensuring proper initialization with the current request's IOContext (account, workspace, auth tokens). Direct instantiation creates clients without authentication context, without caching configuration, and without connection to the metrics pipeline.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `new MyClient(...)` or `new ExternalClient(...)` inside a middleware or resolver, STOP. The client should be registered in the Clients class and accessed via `ctx.clients`.
+
+**Correct**
+
 ```typescript
 // node/clients/index.ts
 import { IOClients } from '@vtex/api'
@@ -12780,7 +9804,8 @@ export async function getProduct(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // node/middlewares/getProduct.ts
 import { CatalogClient } from '../clients/catalogClient'
@@ -12799,13 +9824,18 @@ export async function getProduct(ctx: Context, next: () => Promise<void>) {
 
 ### Constraint: Avoid Monolithic Service Apps
 
-**Rule**: A single service app SHOULD NOT define more than 10 HTTP routes. If you need more, consider splitting into focused microservice apps.
+A single service app SHOULD NOT define more than 10 HTTP routes. If you need more, consider splitting into focused microservice apps.
 
-**Why**: VTEX IO apps run in containers with limited memory (max 512MB). A monolithic app with many routes increases memory usage, cold start time, and blast radius of failures. It also makes the app harder to version and deploy independently. The VTEX IO platform is designed for small, focused apps that compose together.
+**Why this matters**
 
-**Detection**: If `service.json` defines more than 10 routes, warn the developer to consider splitting the app into smaller services. This is a soft limit — there may be valid exceptions.
+VTEX IO apps run in containers with limited memory (max 512MB). A monolithic app with many routes increases memory usage, cold start time, and blast radius of failures. The VTEX IO platform is designed for small, focused apps that compose together.
 
-✅ **CORRECT**:
+**Detection**
+
+If `service.json` defines more than 10 routes, warn the developer to consider splitting the app into smaller services. This is a soft limit — there may be valid exceptions.
+
+**Correct**
+
 ```json
 {
   "memory": 256,
@@ -12819,7 +9849,8 @@ export async function getProduct(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "memory": 512,
@@ -12839,17 +9870,13 @@ export async function getProduct(ctx: Context, next: () => Promise<void>) {
     "route12": { "path": "/_v/api/inventory" }
   }
 }
-// 12 routes covering reviews, products, orders, users, categories,
-// brands, and inventory — this should be 3-4 separate apps.
 ```
 
-## Implementation Pattern
+12 routes covering reviews, products, orders, users, categories, brands, and inventory — this should be 3-4 separate apps.
 
-**The canonical, recommended way to build a VTEX IO service app.**
+## Preferred pattern
 
-### Step 1: Define Custom Clients
-
-Create clients extending the appropriate base class for each external service:
+Define custom clients:
 
 ```typescript
 // node/clients/catalogClient.ts
@@ -12881,9 +9908,7 @@ export class CatalogClient extends JanusClient {
 }
 ```
 
-### Step 2: Register Clients in IOClients
-
-Create the Clients class that registers all custom clients:
+Register clients in IOClients:
 
 ```typescript
 // node/clients/index.ts
@@ -12902,9 +9927,7 @@ export class Clients extends IOClients {
 }
 ```
 
-### Step 3: Create Middlewares
-
-Build middleware functions that use `ctx.clients` and `ctx.state`:
+Create middlewares using `ctx.clients` and `ctx.state`:
 
 ```typescript
 // node/middlewares/getReviews.ts
@@ -12936,7 +9959,7 @@ export async function getReviews(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-### Step 4: Wire Everything in the Service Entry Point
+Wire everything in the Service entry point:
 
 ```typescript
 // node/index.ts
@@ -12977,129 +10000,23 @@ export default new Service<Clients, RecorderState, ParamsContext>({
 })
 ```
 
-### Complete Example
+## Common failure modes
 
-Full project structure for a review service app:
+- **Using axios/fetch/got/node-fetch for HTTP calls**: These libraries bypass the entire VTEX IO infrastructure — no automatic auth token injection, no caching, no retry logic, no metrics. Outbound requests may also be blocked by the firewall. Create a proper client extending `ExternalClient` or `JanusClient` instead.
+- **Putting business logic in clients**: Clients become bloated and hard to test. Keep clients as thin wrappers around HTTP calls. Put business logic in middlewares or dedicated service functions.
+- **Direct client instantiation**: Using `new MyClient(...)` inside a middleware creates clients without auth context, caching, or metrics. Always access via `ctx.clients`.
 
-```typescript
-// node/clients/reviewStorageClient.ts
-import type { InstanceOptions, IOContext } from '@vtex/api'
-import { ExternalClient } from '@vtex/api'
+## Review checklist
 
-interface Review {
-  id: string
-  productId: string
-  rating: number
-  title: string
-  text: string
-  author: string
-  createdAt: string
-}
-
-export class ReviewStorageClient extends ExternalClient {
-  constructor(context: IOContext, options?: InstanceOptions) {
-    super('https://reviews-api.example.com', context, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${context.authToken}`,
-        ...options?.headers,
-      },
-    })
-  }
-
-  public async getByProduct(productId: string): Promise<Review[]> {
-    return this.http.get(`/reviews?productId=${productId}`, {
-      metric: 'review-storage-get-by-product',
-    })
-  }
-
-  public async create(review: Omit<Review, 'id' | 'createdAt'>): Promise<Review> {
-    return this.http.post('/reviews', review, {
-      metric: 'review-storage-create',
-    })
-  }
-}
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Using axios/fetch/got/node-fetch for HTTP Calls
-
-**What happens**: Developers install `axios`, `node-fetch`, or `got` in the `node/package.json` and use them directly in middlewares to call external APIs or VTEX Commerce APIs.
-
-**Why it fails**: These libraries bypass the entire VTEX IO infrastructure — no automatic auth token injection, no built-in caching, no retry logic, no timeout management, no metrics collection, and no billing tracking. Outbound requests may also be blocked by the VTEX IO firewall since they don't route through the proper infrastructure.
-
-**Fix**: Create a custom client extending `ExternalClient` (for non-VTEX APIs) or `JanusClient` (for VTEX APIs), and access it via `ctx.clients`:
-
-```typescript
-// Instead of: import axios from 'axios'
-// Create a proper client:
-import type { InstanceOptions, IOContext } from '@vtex/api'
-import { ExternalClient } from '@vtex/api'
-
-export class PaymentGatewayClient extends ExternalClient {
-  constructor(context: IOContext, options?: InstanceOptions) {
-    super('https://gateway.payment.com', context, {
-      ...options,
-      headers: {
-        'X-Gateway-Key': 'key',
-        ...options?.headers,
-      },
-    })
-  }
-
-  public async charge(amount: number, currency: string): Promise<ChargeResult> {
-    return this.http.post('/v1/charges', { amount, currency }, {
-      metric: 'payment-gateway-charge',
-    })
-  }
-}
-```
-
----
-
-### Anti-Pattern: Putting Business Logic in Clients
-
-**What happens**: Developers put complex business logic (validation, transformation, orchestration) inside client classes instead of keeping clients as thin data-access layers.
-
-**Why it fails**: Clients become bloated and hard to test. Business logic in clients couples your domain rules to the transport layer. When the external API changes, you must refactor both the communication and the business logic simultaneously.
-
-**Fix**: Keep clients as thin wrappers around HTTP calls. Put business logic in middlewares or dedicated service functions:
-
-```typescript
-// Client: thin data access only
-export class OrderClient extends JanusClient {
-  public async getOrder(orderId: string): Promise<Order> {
-    return this.http.get(`/api/oms/pvt/orders/${orderId}`, {
-      metric: 'oms-get-order',
-    })
-  }
-}
-
-// Middleware: business logic lives here
-export async function processOrderRefund(ctx: Context, next: () => Promise<void>) {
-  const order = await ctx.clients.orders.getOrder(ctx.params.orderId)
-
-  if (order.status !== 'invoiced') {
-    ctx.status = 400
-    ctx.body = { error: 'Only invoiced orders can be refunded' }
-    return
-  }
-
-  const refundAmount = calculateRefund(order)
-  await ctx.clients.payments.issueRefund(order.paymentId, refundAmount)
-
-  ctx.status = 200
-  ctx.body = { refundAmount }
-  await next()
-}
-```
+- [ ] Are all HTTP calls going through `@vtex/api` clients (no axios, fetch, got)?
+- [ ] Are all clients accessed via `ctx.clients`, never instantiated with `new`?
+- [ ] Are custom clients registered in the IOClients class?
+- [ ] Does the Service entry point correctly wire clients, routes, resolvers, and events?
+- [ ] Is business logic in middlewares/resolvers, not in client classes?
+- [ ] Does `service.json` have reasonable route count (≤10)?
+- [ ] Are client options (retries, timeout) configured appropriately?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Services](https://developers.vtex.com/docs/guides/vtex-io-documentation-service) — Overview of VTEX IO backend service development
 - [Clients](https://developers.vtex.com/docs/guides/vtex-io-documentation-clients) — Native client list and client architecture overview

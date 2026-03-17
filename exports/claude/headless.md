@@ -2,85 +2,45 @@ This skill provides guidance for AI agents working with VTEX Headless Front-End 
 
 # BFF Layer Design & Security
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The Backend-for-Frontend (BFF) architecture pattern for headless VTEX storefronts, including secure API proxying, credential management, and the critical separation between public and private VTEX APIs.
+Use this skill when building or modifying any headless VTEX storefront that communicates with VTEX APIs — whether a custom storefront, mobile app, or kiosk.
 
-**When to use it**: When building any headless frontend that communicates with VTEX APIs — whether a custom storefront, mobile app, or kiosk. Every headless project needs a BFF layer to protect API credentials and manage authentication tokens server-side.
+- Setting up a BFF (Backend-for-Frontend) layer for a new headless project
+- Deciding which VTEX APIs need server-side proxying vs direct frontend calls
+- Implementing credential management (`VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `VtexIdclientAutCookie`)
+- Reviewing a headless architecture for security compliance
 
-**What you'll learn**:
-- Why a BFF layer is mandatory for headless VTEX (not optional)
-- How to classify VTEX APIs as public vs private and route them accordingly
-- How to manage `VtexIdclientAutCookie` server-side and proxy authenticated requests
-- How to protect `VTEX_APP_KEY` and `VTEX_APP_TOKEN` from client-side exposure
+Do not use this skill for:
+- Checkout-specific proxy logic and OrderForm management (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
+- Search API integration details (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
+- Caching and TTL strategy (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- A BFF layer is **mandatory** for every headless VTEX project. There is no scenario where a headless storefront can safely operate without one.
+- Route all VTEX API calls through the BFF **except** Intelligent Search, which is the only API safe to call directly from the frontend.
+- Use `VtexIdclientAutCookie` (stored server-side) for shopper-scoped API calls. Use `X-VTEX-API-AppKey`/`X-VTEX-API-AppToken` for machine-to-machine calls.
+- Classify APIs by their path: `/pub/` endpoints are public but most still need BFF proxying for session management; `/pvt/` endpoints are private and **must** go through BFF.
+- Even public Checkout endpoints (`/api/checkout/pub/`) must be proxied through BFF for security — they handle sensitive personal data.
+- Create separate API keys with minimal permissions for different BFF modules rather than sharing one key with broad access.
 
-### Concept 1: Public vs Private VTEX APIs
+## Hard constraints
 
-VTEX APIs fall into two categories based on their authentication requirements:
+### Constraint: A BFF layer is mandatory for headless VTEX — no exceptions
 
-- **Public APIs** (`/pub/` in the path): Can be called without API keys. Examples include Intelligent Search (`/api/io/_v/api/intelligent-search/`), Catalog public endpoints (`/api/catalog_system/pub/`), and Checkout public endpoints (`/api/checkout/pub/`). However, even public Checkout endpoints should still be proxied through BFF for security.
-- **Private APIs** (`/pvt/` in the path): Require `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers. Examples include OMS (`/api/oms/pvt/`), Profile System (`/api/profile-system/pvt/`), and Pricing (`/api/pricing/pvt/`). These must NEVER be called from client-side code.
+Every headless VTEX storefront MUST have a server-side BFF layer. Client-side code MUST NOT make direct HTTP requests to private VTEX API endpoints. All private API calls must be routed through the BFF.
 
-The only API safe to call directly from the frontend is Intelligent Search, because it is fully public and designed for client-side use.
+**Why this matters**
 
-### Concept 2: VtexIdclientAutCookie
+Private VTEX APIs require `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers. If the frontend calls these APIs directly, the credentials must be embedded in client-side code or transmitted to the browser, exposing them to any user who opens browser DevTools. Stolen API keys can be used to access order data, modify pricing, or perform destructive administrative actions.
 
-When a shopper logs in to a VTEX store, the platform issues a JWT token set as a cookie named `VtexIdclientAutCookie`. This token:
+**Detection**
 
-- Is valid for 24 hours after creation
-- Authenticates requests on behalf of the shopper
-- Has scoped permissions (shoppers can only perform shopping-related actions)
-- Must be stored and managed server-side in headless implementations
-- Can be refreshed using the VTEX ID refresh token flow
+If you see `fetch` or `axios` calls to `vtexcommercestable.com.br/api/checkout`, `/api/oms`, `/api/profile`, or any `/pvt/` endpoint in client-side code (files under `src/`, `public/`, `app/`, or any browser-executed bundle) → STOP immediately. These calls must be moved to the BFF.
 
-In headless stores, the BFF layer intercepts the login callback, extracts the `VtexIdclientAutCookie`, stores it in a secure server-side session, and uses it to authenticate subsequent API calls on behalf of the shopper.
+**Correct**
 
-### Concept 3: Machine Authentication (API Keys)
-
-For server-to-server communication where no shopper context is needed, VTEX uses application keys:
-
-- `X-VTEX-API-AppKey`: The public identifier for the credential pair
-- `X-VTEX-API-AppToken`: The secret token associated with the key
-
-These credentials are configured in License Manager with specific roles and permissions. They must only exist in server-side environment variables and never be transmitted to or accessible from client-side code.
-
-**Architecture/Data Flow**:
-
-```text
-Frontend (Browser/App)
-    │
-    ├── Direct call (OK): Intelligent Search API (public, read-only)
-    │
-    └── All other requests → BFF Layer (Node.js/Express)
-                                │
-                                ├── Injects VtexIdclientAutCookie from session
-                                ├── Injects X-VTEX-API-AppKey / X-VTEX-API-AppToken
-                                ├── Validates & sanitizes input
-                                └── Proxies to VTEX APIs
-                                        │
-                                        ├── Checkout API (/api/checkout/pub/...)
-                                        ├── OMS API (/api/oms/pvt/...)
-                                        ├── Profile API (/api/profile-system/pvt/...)
-                                        └── Other VTEX services
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: Frontend MUST NOT Call Private VTEX APIs
-
-**Rule**: Client-side code (browser JavaScript, mobile app networking layer) MUST NOT make direct HTTP requests to private VTEX API endpoints. All private API calls must be routed through the BFF.
-
-**Why**: Private VTEX APIs require `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers. If the frontend calls these APIs directly, the credentials must be embedded in client-side code or transmitted to the browser, exposing them to any user who opens browser DevTools. Stolen API keys can be used to access order data, modify pricing, or perform destructive administrative actions.
-
-**Detection**: If you see `fetch` or `axios` calls to `vtexcommercestable.com.br/api/checkout`, `/api/oms`, `/api/profile`, or any `/pvt/` endpoint in client-side code (files under `src/`, `public/`, `app/`, or any browser-executed bundle) → STOP immediately. These calls must be moved to the BFF.
-
-✅ **CORRECT**:
 ```typescript
 // Frontend code — calls BFF, not VTEX directly
 async function getOrderDetails(orderId: string): Promise<Order> {
@@ -96,7 +56,8 @@ async function getOrderDetails(orderId: string): Promise<Order> {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend code — calls VTEX OMS API directly (SECURITY VULNERABILITY)
 async function getOrderDetails(orderId: string): Promise<Order> {
@@ -115,15 +76,20 @@ async function getOrderDetails(orderId: string): Promise<Order> {
 
 ---
 
-### Constraint: VtexIdclientAutCookie MUST Be Managed Server-Side
+### Constraint: VtexIdclientAutCookie MUST be managed server-side
 
-**Rule**: The `VtexIdclientAutCookie` token MUST be stored in a secure server-side session (e.g., encrypted cookie, Redis session store) and MUST NOT be stored in `localStorage`, `sessionStorage`, or any client-accessible JavaScript variable.
+The `VtexIdclientAutCookie` token MUST be stored in a secure server-side session (e.g., encrypted cookie, Redis session store) and MUST NOT be stored in `localStorage`, `sessionStorage`, or any client-accessible JavaScript variable.
 
-**Why**: The `VtexIdclientAutCookie` is a bearer token that authenticates all actions on behalf of a shopper — placing orders, viewing profile data, accessing payment information. If stored client-side, it can be stolen via XSS attacks, browser extensions, or shared/public computers. An attacker with this token can impersonate the shopper.
+**Why this matters**
 
-**Detection**: If you see `VtexIdclientAutCookie` referenced in `localStorage.setItem`, `sessionStorage.setItem`, or assigned to a JavaScript variable in client-side code → STOP immediately. The token must be managed exclusively server-side.
+The `VtexIdclientAutCookie` is a bearer token that authenticates all actions on behalf of a shopper — placing orders, viewing profile data, accessing payment information. If stored client-side, it can be stolen via XSS attacks, browser extensions, or shared/public computers. An attacker with this token can impersonate the shopper.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `VtexIdclientAutCookie` referenced in `localStorage.setItem`, `sessionStorage.setItem`, or assigned to a JavaScript variable in client-side code → STOP immediately. The token must be managed exclusively server-side.
+
+**Correct**
+
 ```typescript
 // BFF route — stores VtexIdclientAutCookie in server-side session
 import { Router, Request, Response } from "express";
@@ -171,7 +137,8 @@ router.get("/api/bff/profile", async (req: Request, res: Response) => {
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend code — stores auth token in localStorage (SECURITY VULNERABILITY)
 function handleLoginCallback() {
@@ -193,15 +160,20 @@ async function getProfile() {
 
 ---
 
-### Constraint: API Keys MUST NOT Appear in Client-Side Code
+### Constraint: API keys MUST NOT appear in client-side code
 
-**Rule**: `VTEX_APP_KEY` and `VTEX_APP_TOKEN` values MUST only exist in server-side environment variables and MUST NOT be present in any file that is bundled, served, or accessible to the browser.
+`VTEX_APP_KEY` and `VTEX_APP_TOKEN` values MUST only exist in server-side environment variables and MUST NOT be present in any file that is bundled, served, or accessible to the browser.
 
-**Why**: API keys grant programmatic access to the VTEX platform with the permissions of their associated role. Exposing them in frontend bundles, public directories, or client-side environment variables (e.g., `NEXT_PUBLIC_*`, `VITE_*`) allows anyone to extract them and make unauthorized API calls.
+**Why this matters**
 
-**Detection**: If you see `VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `X-VTEX-API-AppKey`, or `X-VTEX-API-AppToken` in files under `src/`, `public/`, `app/` directories, or in environment variables prefixed with `NEXT_PUBLIC_`, `VITE_`, or `REACT_APP_` → STOP immediately. Move these to server-side-only environment variables.
+API keys grant programmatic access to the VTEX platform with the permissions of their associated role. Exposing them in frontend bundles, public directories, or client-side environment variables (e.g., `NEXT_PUBLIC_*`, `VITE_*`) allows anyone to extract them and make unauthorized API calls.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `X-VTEX-API-AppKey`, or `X-VTEX-API-AppToken` in files under `src/`, `public/`, `app/` directories, or in environment variables prefixed with `NEXT_PUBLIC_`, `VITE_`, or `REACT_APP_` → STOP immediately. Move these to server-side-only environment variables.
+
+**Correct**
+
 ```typescript
 // BFF server code — reads keys from server-side env vars only
 // File: server/vtex-client.ts (never bundled for browser)
@@ -238,7 +210,8 @@ router.get("/api/bff/orders/:orderId", async (req: Request, res: Response) => {
 export default router;
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // .env file with NEXT_PUBLIC_ prefix — exposed to browser bundle!
 // NEXT_PUBLIC_VTEX_APP_KEY=vtexappkey-mystore-ABCDEF
@@ -259,13 +232,29 @@ async function fetchOrders() {
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Architecture overview — how requests flow through the BFF:
 
-### Step 1: Set Up the BFF Server
+```text
+Frontend (Browser/App)
+    │
+    ├── Direct call (OK): Intelligent Search API (public, read-only)
+    │
+    └── All other requests → BFF Layer (Node.js/Express)
+                                │
+                                ├── Injects VtexIdclientAutCookie from session
+                                ├── Injects X-VTEX-API-AppKey / X-VTEX-API-AppToken
+                                ├── Validates & sanitizes input
+                                └── Proxies to VTEX APIs
+                                        │
+                                        ├── Checkout API (/api/checkout/pub/...)
+                                        ├── OMS API (/api/oms/pvt/...)
+                                        ├── Profile API (/api/profile-system/pvt/...)
+                                        └── Other VTEX services
+```
 
-Create an Express server that will serve as the BFF layer between your frontend and VTEX APIs. All VTEX credentials live exclusively in this server's environment.
+Minimal BFF server setup with session management:
 
 ```typescript
 // server/index.ts
@@ -312,9 +301,7 @@ app.listen(PORT, () => {
 });
 ```
 
-### Step 2: Create a VTEX API Client with Credential Injection
-
-Build a shared utility that injects the correct authentication headers for each request type — either API keys for machine-to-machine calls or `VtexIdclientAutCookie` for shopper-scoped calls.
+VTEX API client with credential injection for both auth types:
 
 ```typescript
 // server/vtex-api-client.ts
@@ -364,9 +351,7 @@ export async function vtexRequest<T>(options: VtexRequestOptions): Promise<T> {
 }
 ```
 
-### Step 3: Implement BFF Route Handlers
-
-Create route handlers that validate incoming requests, extract session data, and proxy to VTEX APIs with proper authentication.
+BFF route handler with session-based auth and input validation:
 
 ```typescript
 // server/routes/orders.ts
@@ -404,9 +389,7 @@ ordersRoutes.get("/:orderId", async (req: Request, res: Response) => {
 });
 ```
 
-### Complete Example
-
-A full BFF setup with authentication flow, session management, and API proxying:
+Authentication flow with server-side token management:
 
 ```typescript
 // server/routes/auth.ts
@@ -461,101 +444,86 @@ authRoutes.get("/status", (req: Request, res: Response) => {
 });
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Proxying Intelligent Search through BFF**: Routing every VTEX API call through the BFF, including Intelligent Search, adds unnecessary latency and server load. Intelligent Search is a public, read-only API designed for direct frontend consumption. Call it directly from the frontend.
 
-### Anti-Pattern: Proxying All APIs Including Intelligent Search
+  ```typescript
+  // Frontend code — call Intelligent Search directly (this is correct!)
+  async function searchProducts(query: string, from: number = 0, to: number = 19): Promise<SearchResult> {
+    const baseUrl = `https://${STORE_ACCOUNT}.vtexcommercestable.com.br`;
+    const response = await fetch(
+      `${baseUrl}/api/io/_v/api/intelligent-search/product_search/?query=${encodeURIComponent(query)}&from=${from}&to=${to}&locale=en-US`,
+    );
+    return response.json();
+  }
+  ```
 
-**What happens**: Developers route every VTEX API call through the BFF, including Intelligent Search, adding unnecessary latency and server load to search queries.
+- **Sharing a single API key across all BFF operations**: Using one API key with broad permissions (e.g., Owner role) for all BFF operations means a compromised key grants access to every VTEX resource. Create separate API keys for different BFF modules with minimal required permissions.
 
-**Why it fails**: Intelligent Search is a public, read-only API designed for direct frontend consumption. Proxying it through the BFF adds a network hop, increases latency on every search interaction, and puts unnecessary load on the BFF server. Search queries are high-frequency operations that benefit from direct CDN-cached responses.
+  ```typescript
+  // server/vtex-credentials.ts — separate keys per domain
+  export const credentials = {
+    oms: {
+      appKey: process.env.VTEX_OMS_APP_KEY!,
+      appToken: process.env.VTEX_OMS_APP_TOKEN!,
+    },
+    checkout: {
+      appKey: process.env.VTEX_CHECKOUT_APP_KEY!,
+      appToken: process.env.VTEX_CHECKOUT_APP_TOKEN!,
+    },
+    catalog: {
+      appKey: process.env.VTEX_CATALOG_APP_KEY!,
+      appToken: process.env.VTEX_CATALOG_APP_TOKEN!,
+    },
+  } as const;
+  ```
 
-**Fix**: Call Intelligent Search directly from the frontend. Only proxy APIs that require authentication or handle sensitive data.
+- **Logging API credentials or auth tokens**: Logging request headers or full request objects during debugging inadvertently writes API keys or `VtexIdclientAutCookie` values to log files, which may be accessible to multiple team members or attackers. Sanitize all log output to strip sensitive headers before logging.
 
-```typescript
-// Frontend code — call Intelligent Search directly (this is correct!)
-async function searchProducts(query: string, from: number = 0, to: number = 19): Promise<SearchResult> {
-  const baseUrl = `https://${STORE_ACCOUNT}.vtexcommercestable.com.br`;
-  const response = await fetch(
-    `${baseUrl}/api/io/_v/api/intelligent-search/product_search/?query=${encodeURIComponent(query)}&from=${from}&to=${to}&locale=en-US`,
-  );
-  return response.json();
-}
-```
+  ```typescript
+  // server/middleware/request-logger.ts
+  import { Request, Response, NextFunction } from "express";
 
----
+  const SENSITIVE_HEADERS = [
+    "x-vtex-api-appkey",
+    "x-vtex-api-apptoken",
+    "cookie",
+    "authorization",
+  ];
 
-### Anti-Pattern: Sharing a Single API Key Across All BFF Operations
+  export function requestLogger(req: Request, _res: Response, next: NextFunction) {
+    const sanitizedHeaders = Object.fromEntries(
+      Object.entries(req.headers).map(([key, value]) =>
+        SENSITIVE_HEADERS.includes(key.toLowerCase())
+          ? [key, "[REDACTED]"]
+          : [key, value]
+      )
+    );
 
-**What happens**: Developers use one API key with broad permissions (e.g., Owner role) for all BFF operations instead of creating scoped keys for different operations.
+    console.log({
+      method: req.method,
+      path: req.path,
+      headers: sanitizedHeaders,
+      timestamp: new Date().toISOString(),
+    });
 
-**Why it fails**: If the API key is compromised (e.g., via a server vulnerability or log leak), the attacker gains access to every VTEX resource. The principle of least privilege requires that each key only has the permissions it needs.
+    next();
+  }
+  ```
 
-**Fix**: Create separate API keys for different BFF modules with minimal required permissions. Use one key for OMS read access, another for checkout operations, etc.
+## Review checklist
 
-```typescript
-// server/vtex-credentials.ts — separate keys per domain
-export const credentials = {
-  oms: {
-    appKey: process.env.VTEX_OMS_APP_KEY!,
-    appToken: process.env.VTEX_OMS_APP_TOKEN!,
-  },
-  checkout: {
-    appKey: process.env.VTEX_CHECKOUT_APP_KEY!,
-    appToken: process.env.VTEX_CHECKOUT_APP_TOKEN!,
-  },
-  catalog: {
-    appKey: process.env.VTEX_CATALOG_APP_KEY!,
-    appToken: process.env.VTEX_CATALOG_APP_TOKEN!,
-  },
-} as const;
-```
-
----
-
-### Anti-Pattern: Logging API Credentials or Auth Tokens
-
-**What happens**: Developers log request headers or full request objects during debugging, inadvertently writing API keys or `VtexIdclientAutCookie` values to log files.
-
-**Why it fails**: Log files are often stored in centralized logging systems (e.g., CloudWatch, Datadog) accessible to multiple team members. Credentials in logs can be harvested by anyone with log access or by attackers who compromise the logging infrastructure.
-
-**Fix**: Sanitize all log output to strip sensitive headers before logging. Never log full request/response objects.
-
-```typescript
-// server/middleware/request-logger.ts
-import { Request, Response, NextFunction } from "express";
-
-const SENSITIVE_HEADERS = [
-  "x-vtex-api-appkey",
-  "x-vtex-api-apptoken",
-  "cookie",
-  "authorization",
-];
-
-export function requestLogger(req: Request, _res: Response, next: NextFunction) {
-  const sanitizedHeaders = Object.fromEntries(
-    Object.entries(req.headers).map(([key, value]) =>
-      SENSITIVE_HEADERS.includes(key.toLowerCase())
-        ? [key, "[REDACTED]"]
-        : [key, value]
-    )
-  );
-
-  console.log({
-    method: req.method,
-    path: req.path,
-    headers: sanitizedHeaders,
-    timestamp: new Date().toISOString(),
-  });
-
-  next();
-}
-```
+- [ ] Is a BFF layer present? Every headless VTEX project requires one — no exceptions.
+- [ ] Are all private VTEX API calls (`/pvt/` endpoints) routed through the BFF?
+- [ ] Are `VTEX_APP_KEY` and `VTEX_APP_TOKEN` stored exclusively in server-side environment variables?
+- [ ] Are API keys absent from any `NEXT_PUBLIC_*`, `VITE_*`, or `REACT_APP_*` environment variables?
+- [ ] Is `VtexIdclientAutCookie` stored in a server-side session, not in `localStorage` or `sessionStorage`?
+- [ ] Is Intelligent Search called directly from the frontend (not unnecessarily proxied through BFF)?
+- [ ] Are separate API keys used for different BFF modules with minimal permissions?
+- [ ] Are sensitive headers redacted from all log output?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Headless commerce overview](https://developers.vtex.com/docs/guides/headless-commerce) — Core architecture guide for building headless stores on VTEX
 - [Headless authentication](https://developers.vtex.com/docs/guides/headless-authentication) — OAuth-based shopper authentication flow for headless implementations
@@ -570,105 +538,66 @@ This skill provides guidance for AI agents working with VTEX Headless Front-End 
 
 # Caching & Performance for Headless VTEX
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Caching strategies for headless VTEX storefronts, including which APIs can be aggressively cached, which must never be cached, CDN configuration, BFF-level caching with `stale-while-revalidate` patterns, and cache invalidation strategies.
+Use this skill when building or optimizing a headless VTEX storefront for performance. Proper caching is the single most impactful performance optimization for headless commerce.
 
-**When to use it**: When building or optimizing a headless VTEX storefront for performance. Proper caching is the single most impactful performance optimization for headless commerce — it reduces latency, server load, and API rate limit consumption while improving shopper experience.
+- Configuring CDN or edge caching for Intelligent Search and Catalog APIs
+- Adding BFF-level caching (in-memory or Redis) for frequently requested data
+- Deciding which VTEX API responses can be cached and which must never be cached
+- Implementing cache invalidation when catalog data changes
 
-**What you'll learn**:
-- How to classify VTEX APIs into cacheable (public/read-only) vs non-cacheable (transactional/personal)
-- How to implement CDN caching for Intelligent Search and Catalog APIs
-- How to add BFF-level caching with `stale-while-revalidate` for optimal freshness/performance balance
-- How to implement cache invalidation when catalog data changes
+Do not use this skill for:
+- BFF architecture and API routing decisions (use [`headless-bff-architecture`](../headless-bff-architecture/skill.md))
+- Intelligent Search API integration specifics (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
+- Checkout proxy and OrderForm management (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Classify every VTEX API as cacheable or non-cacheable before implementing caching logic.
+- **Cacheable** (public, read-only, non-personalized): Intelligent Search, Catalog public endpoints, top searches, autocomplete.
+- **Non-cacheable** (transactional, personalized, sensitive): Checkout, Profile, OMS, Payments, Pricing private endpoints. These must NEVER be cached at any layer.
+- Use `stale-while-revalidate` for the best freshness/performance balance — serve cached data instantly while refreshing in the background.
+- Use moderate TTLs (2-15 minutes) combined with event-driven invalidation. Never set TTLs of hours/days without an invalidation mechanism.
+- Cache by request URL/params only, not by user identity — catalog data is the same for all anonymous users in the same trade policy.
+- Layer caching: CDN edge cache for direct frontend calls (Search), BFF cache (Redis/in-memory) for proxied catalog data.
 
-### Concept 1: API Cacheability Classification
+Recommended TTLs:
 
-VTEX APIs fall into two categories based on whether their responses can be cached:
-
-**Cacheable APIs** (public, read-only, non-personalized):
-| API | Example Endpoints | Recommended TTL |
+| API | Recommended TTL | SWR |
 |---|---|---|
-| Intelligent Search | `/api/io/_v/api/intelligent-search/product_search/` | 2-5 minutes |
-| Catalog (public) | `/api/catalog_system/pub/category/tree/`, `/api/catalog_system/pub/products/search/` | 5-15 minutes |
-| Intelligent Search autocomplete | `/api/io/_v/api/intelligent-search/autocomplete_suggestions` | 1-2 minutes |
-| Intelligent Search top searches | `/api/io/_v/api/intelligent-search/top_searches` | 5-10 minutes |
+| Intelligent Search (product_search) | 2-5 minutes | 60s |
+| Catalog (category tree) | 5-15 minutes | 5 min |
+| Intelligent Search (autocomplete) | 1-2 minutes | 30s |
+| Intelligent Search (top searches) | 5-10 minutes | 2 min |
+| Catalog (product details) | 5 minutes | 60s |
 
-**Non-cacheable APIs** (transactional, personalized, or sensitive):
-| API | Example Endpoints | Why Not Cacheable |
-|---|---|---|
-| Checkout | `/api/checkout/pub/orderForm` | Cart data is per-user, changes with every action |
-| Profile | `/api/profile-system/pvt/` | Personal data, GDPR/LGPD sensitive |
-| OMS (Orders) | `/api/oms/pvt/orders` | Order status changes, user-specific |
-| Payments | `/api/payments/` | Financial transactions, must always be real-time |
-| Pricing (private) | `/api/pricing/pvt/` | May have per-user pricing rules |
+APIs that must NEVER be cached:
 
-### Concept 2: Cache Layers
+| API | Why |
+|---|---|
+| Checkout (`/api/checkout/`) | Cart data is per-user, changes with every action |
+| Profile (`/api/profile-system/pvt/`) | Personal data, GDPR/LGPD sensitive |
+| OMS (`/api/oms/pvt/orders`) | Order status changes, user-specific |
+| Payments (`/api/payments/`) | Financial transactions, must always be real-time |
+| Pricing private (`/api/pricing/pvt/`) | May have per-user pricing rules |
 
-In a headless VTEX architecture, caching can happen at multiple layers:
+## Hard constraints
 
-1. **CDN Edge Cache**: Caches responses closest to the user. Best for Intelligent Search (called directly from frontend). Use `Cache-Control` headers.
-2. **BFF In-Memory Cache**: Caches VTEX API responses within the BFF process. Fast but limited by server memory. Good for category trees and top searches.
-3. **BFF Distributed Cache (Redis/Memcached)**: Shared cache across multiple BFF instances. Best for catalog data that multiple users request.
-4. **Browser Cache**: Client-side caching via `Cache-Control` headers. Good for static catalog data, but be careful with personalized data.
+### Constraint: MUST cache public API data aggressively
 
-### Concept 3: Stale-While-Revalidate (SWR)
+Search results, catalog data, category trees, and other public read-only data MUST be cached at appropriate levels (CDN, BFF, or both). Without caching, every user request hits VTEX APIs directly.
 
-The `stale-while-revalidate` pattern serves cached (potentially stale) data immediately while asynchronously fetching fresh data in the background. This provides:
+**Why this matters**
 
-- **Instant responses**: Users see data immediately, even if slightly stale
-- **Eventual freshness**: Cache is updated in the background for the next request
-- **Resilience**: If the origin is down, stale data is still served
+Without caching, a headless storefront generates an API request for every single page view, search, and category browse. This quickly exceeds VTEX API rate limits (causing 429 errors and degraded service), adds 200-500ms of latency per request, and creates a poor shopper experience. A store with 10,000 concurrent users making uncached search requests will overwhelm any API.
 
-The HTTP header pattern: `Cache-Control: public, max-age=120, stale-while-revalidate=60`
-- Serves cached data for 120 seconds without checking origin
-- Between 120-180 seconds, serves stale data while fetching fresh data
-- After 180 seconds, waits for fresh data before responding
+**Detection**
 
-### Concept 4: Cache Invalidation
+If a headless storefront calls Intelligent Search or Catalog APIs without any caching layer (no CDN cache headers, no BFF cache, no `Cache-Control` headers) → STOP immediately. Caching must be implemented for all public, read-only API responses.
 
-Catalog data changes (product updates, price changes, new products) must eventually reflect on the storefront. Strategies:
+**Correct**
 
-- **Time-based (TTL)**: Set appropriate expiration times. Shorter TTL = fresher data but more origin load.
-- **Event-driven**: Use VTEX webhooks/hooks to invalidate specific cache entries when data changes.
-- **Manual purge**: Provide admin endpoints to force-clear cache for specific products or categories.
-
-**Architecture/Data Flow**:
-
-```text
-Frontend (Browser)
-    │
-    ├── Direct to CDN (Intelligent Search)
-    │   └── CDN Edge Cache (TTL: 2-5 min, SWR: 60s)
-    │       └── VTEX Intelligent Search API
-    │
-    └── BFF Endpoints
-        │
-        ├── Cacheable routes (catalog, category tree)
-        │   └── BFF Cache Layer (Redis/in-memory)
-        │       └── VTEX Catalog API
-        │
-        └── Non-cacheable routes (checkout, profile, orders)
-            └── Direct proxy to VTEX (NO CACHING)
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: MUST Cache Public Data Aggressively
-
-**Rule**: Search results, catalog data, category trees, and other public read-only data MUST be cached at appropriate levels (CDN, BFF, or both). Without caching, every user request hits VTEX APIs directly.
-
-**Why**: Without caching, a headless storefront generates an API request for every single page view, search, and category browse. This quickly exceeds VTEX API rate limits (causing 429 errors and degraded service), adds 200-500ms of latency per request, and creates a poor shopper experience. A store with 10,000 concurrent users making uncached search requests will overwhelm any API.
-
-**Detection**: If a headless storefront calls Intelligent Search or Catalog APIs without any caching layer (no CDN cache headers, no BFF cache, no `Cache-Control` headers) → STOP immediately. Caching must be implemented for all public, read-only API responses.
-
-✅ **CORRECT**:
 ```typescript
 // BFF route with in-memory cache for category tree
 import { Router, Request, Response } from "express";
@@ -748,7 +677,8 @@ router.get("/categories", async (_req: Request, res: Response) => {
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // No caching — every request hits VTEX directly
 router.get("/categories", async (_req: Request, res: Response) => {
@@ -763,15 +693,20 @@ router.get("/categories", async (_req: Request, res: Response) => {
 
 ---
 
-### Constraint: MUST NOT Cache Transactional or Personal Data
+### Constraint: MUST NOT cache transactional or personal data
 
-**Rule**: Responses from Checkout API, Profile API, OMS API, and Payments API MUST NOT be cached at any layer — not in the CDN, not in BFF memory, not in Redis, and not in browser cache.
+Responses from Checkout API, Profile API, OMS API, and Payments API MUST NOT be cached at any layer — not in the CDN, not in BFF memory, not in Redis, and not in browser cache.
 
-**Why**: Caching transactional data can cause catastrophic failures. A cached OrderForm means a shopper sees stale cart contents (wrong items, wrong prices). Cached profile data can leak one user's personal information to another user (especially behind shared caches). Cached order data shows stale statuses. Any of these is a security vulnerability, data privacy violation (GDPR/LGPD), or business logic failure.
+**Why this matters**
 
-**Detection**: If you see caching logic (Redis `set`, in-memory cache, `Cache-Control` headers with `max-age > 0`) applied to checkout, order, profile, or payment API responses → STOP immediately. These endpoints must always return fresh data.
+Caching transactional data can cause catastrophic failures. A cached OrderForm means a shopper sees stale cart contents (wrong items, wrong prices). Cached profile data can leak one user's personal information to another user (especially behind shared caches). Cached order data shows stale statuses. Any of these is a security vulnerability, data privacy violation (GDPR/LGPD), or business logic failure.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see caching logic (Redis `set`, in-memory cache, `Cache-Control` headers with `max-age > 0`) applied to checkout, order, profile, or payment API responses → STOP immediately. These endpoints must always return fresh data.
+
+**Correct**
+
 ```typescript
 // BFF checkout route — explicitly no caching
 import { Router, Request, Response } from "express";
@@ -813,7 +748,8 @@ checkoutRoutes.get("/cart", async (req: Request, res: Response) => {
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // CATASTROPHIC: Caching checkout data in Redis
 import Redis from "ioredis";
@@ -842,15 +778,20 @@ checkoutRoutes.get("/cart", async (req: Request, res: Response) => {
 
 ---
 
-### Constraint: MUST Implement Cache Invalidation Strategy
+### Constraint: MUST implement cache invalidation strategy
 
-**Rule**: Every caching implementation MUST have a clear invalidation strategy. Cached data must have appropriate TTLs and there must be a mechanism to force-invalidate cache when the underlying data changes.
+Every caching implementation MUST have a clear invalidation strategy. Cached data must have appropriate TTLs and there must be a mechanism to force-invalidate cache when the underlying data changes.
 
-**Why**: Without invalidation, cached data becomes permanently stale. Products that are out of stock continue to appear available. Price changes don't reflect until the arbitrary TTL expires. New products are invisible. This leads to a poor shopper experience, failed orders (due to stale availability), and incorrect pricing.
+**Why this matters**
 
-**Detection**: If a caching implementation has no TTL (`max-age`, expiration time) or has very long TTLs (hours/days) without any invalidation mechanism → STOP immediately. All caches need bounded TTLs and ideally event-driven invalidation.
+Without invalidation, cached data becomes permanently stale. Products that are out of stock continue to appear available. Price changes don't reflect until the arbitrary TTL expires. New products are invisible. This leads to a poor shopper experience, failed orders (due to stale availability), and incorrect pricing.
 
-✅ **CORRECT**:
+**Detection**
+
+If a caching implementation has no TTL (`max-age`, expiration time) or has very long TTLs (hours/days) without any invalidation mechanism → STOP immediately. All caches need bounded TTLs and ideally event-driven invalidation.
+
+**Correct**
+
 ```typescript
 // Cache with TTL + manual invalidation endpoint + event-driven invalidation
 import { Router, Request, Response } from "express";
@@ -919,22 +860,21 @@ router.post("/cache/invalidate", (req: Request, res: Response) => {
 
 // Webhook endpoint for VTEX catalog change events
 router.post("/webhooks/catalog-change", (req: Request, res: Response) => {
-  const { IdSku, productId } = req.body as { IdSku?: string; productId?: string };
+  const { productId } = req.body as { productId?: string };
 
   if (productId) {
     productCache.delete(productId);
     console.log(`Cache invalidated for product ${productId}`);
   }
 
-  // Also invalidate related search cache entries
-  // In production, use a more sophisticated invalidation strategy
   res.status(200).json({ received: true });
 });
 
 export default router;
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Cache with no TTL and no invalidation — data becomes permanently stale
 const cache = new Map<string, unknown>();
@@ -954,16 +894,30 @@ router.get("/products/:productId", async (req: Request, res: Response) => {
 });
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Cache layer architecture for a headless VTEX storefront:
 
-### Step 1: Set Up CDN Cache Headers for Intelligent Search
+```text
+Frontend (Browser)
+    │
+    ├── Direct to CDN (Intelligent Search)
+    │   └── CDN Edge Cache (TTL: 2-5 min, SWR: 60s)
+    │       └── VTEX Intelligent Search API
+    │
+    └── BFF Endpoints
+        │
+        ├── Cacheable routes (catalog, category tree)
+        │   └── BFF Cache Layer (Redis/in-memory)
+        │       └── VTEX Catalog API
+        │
+        └── Non-cacheable routes (checkout, profile, orders)
+            └── Direct proxy to VTEX (NO CACHING)
+```
 
-Since Intelligent Search is called directly from the frontend, use a CDN (e.g., Cloudflare, CloudFront, Fastly) to cache responses at the edge. Configure your CDN to respect `Cache-Control` headers or set custom caching rules for the search API path.
+CDN cache headers for Intelligent Search (edge function example):
 
 ```typescript
-// If you're using a CDN worker/edge function to add cache headers:
 // cloudflare-worker.ts or similar edge function
 async function handleSearchRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -998,9 +952,7 @@ async function handleSearchRequest(request: Request): Promise<Response> {
 }
 ```
 
-### Step 2: Implement BFF Cache Layer with Redis
-
-For catalog data proxied through the BFF, use Redis as a shared cache that persists across BFF restarts and is shared across multiple instances.
+Redis-based BFF cache with stale-while-revalidate:
 
 ```typescript
 // server/cache/redis-cache.ts
@@ -1054,123 +1006,12 @@ export async function invalidateCache(pattern: string): Promise<number> {
 }
 ```
 
-### Step 3: Apply Caching to BFF Routes Selectively
-
-Only cache public, read-only data. Never cache checkout, profile, or order data.
-
-```typescript
-// server/routes/catalog.ts
-import { Router, Request, Response } from "express";
-import { getCachedOrFetch, invalidateCache } from "../cache/redis-cache";
-
-const router = Router();
-
-const VTEX_ACCOUNT = process.env.VTEX_ACCOUNT!;
-const VTEX_BASE = `https://${VTEX_ACCOUNT}.vtexcommercestable.com.br`;
-
-// Category tree — long cache, changes rarely
-router.get("/categories", async (_req: Request, res: Response) => {
-  try {
-    const result = await getCachedOrFetch(
-      "catalog:categories",
-      async () => {
-        const response = await fetch(`${VTEX_BASE}/api/catalog_system/pub/category/tree/3`);
-        return response.json();
-      },
-      { ttlSeconds: 900, swrSeconds: 300 } // 15 min cache, 5 min SWR
-    );
-
-    res.set("X-Cache", result.cacheStatus);
-    res.json(result.data);
-  } catch (error) {
-    console.error("Error fetching categories:", error);
-    res.status(500).json({ error: "Failed to fetch categories" });
-  }
-});
-
-// Product details — moderate cache
-router.get("/products/:productId", async (req: Request, res: Response) => {
-  const { productId } = req.params;
-
-  if (!/^\d+$/.test(productId)) {
-    return res.status(400).json({ error: "Invalid product ID" });
-  }
-
-  try {
-    const result = await getCachedOrFetch(
-      `catalog:product:${productId}`,
-      async () => {
-        const response = await fetch(
-          `${VTEX_BASE}/api/catalog_system/pub/products/search?fq=productId:${productId}`
-        );
-        return response.json();
-      },
-      { ttlSeconds: 300, swrSeconds: 60 } // 5 min cache, 1 min SWR
-    );
-
-    res.set("X-Cache", result.cacheStatus);
-    res.json(result.data);
-  } catch (error) {
-    console.error("Error fetching product:", error);
-    res.status(500).json({ error: "Failed to fetch product" });
-  }
-});
-
-// Cart simulation — very short cache (same cart config may be checked by many users)
-router.post("/simulation", async (req: Request, res: Response) => {
-  const cacheKey = `catalog:simulation:${JSON.stringify(req.body)}`;
-
-  try {
-    const result = await getCachedOrFetch(
-      cacheKey,
-      async () => {
-        const response = await fetch(
-          `${VTEX_BASE}/api/checkout/pub/orderForms/simulation`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(req.body),
-          }
-        );
-        return response.json();
-      },
-      { ttlSeconds: 30, swrSeconds: 10 } // 30 sec cache, 10 sec SWR
-    );
-
-    res.set("X-Cache", result.cacheStatus);
-    res.json(result.data);
-  } catch (error) {
-    console.error("Error simulating cart:", error);
-    res.status(500).json({ error: "Failed to simulate cart" });
-  }
-});
-
-// Webhook for catalog changes — invalidates affected cache
-router.post("/webhooks/catalog", async (req: Request, res: Response) => {
-  const { productId } = req.body as { productId?: string };
-
-  if (productId) {
-    await invalidateCache(`catalog:product:${productId}`);
-  }
-
-  // Invalidate category tree on any catalog change
-  await invalidateCache("catalog:categories");
-
-  res.status(200).json({ received: true });
-});
-
-export default router;
-```
-
-### Complete Example
-
-Full caching setup with CDN headers, BFF cache, and no-cache enforcement for transactional routes:
+Applying cache strategy per route group:
 
 ```typescript
 // server/middleware/cache-headers.ts
 import { Request, Response, NextFunction } from "express";
 
-// Middleware to set appropriate cache headers based on route type
 export function cacheHeaders(type: "public" | "private" | "no-cache") {
   return (_req: Request, res: Response, next: NextFunction) => {
     switch (type) {
@@ -1217,110 +1058,66 @@ app.use("/api/bff/catalog", cacheHeaders("public"), catalogRoutes);
 app.use("/api/bff/checkout", cacheHeaders("no-cache"), checkoutRoutes);
 app.use("/api/bff/orders", cacheHeaders("no-cache"), orderRoutes);
 app.use("/api/bff/profile", cacheHeaders("no-cache"), profileRoutes);
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`BFF server running on port ${PORT}`);
-});
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Caching based on session or user identity**: Creating per-user caches for catalog data (e.g., keying product search results by user ID) multiplies storage by user count and eliminates the primary benefit of caching. Cache public API responses by request URL/params only. For trade-policy-specific pricing, include trade policy (not user ID) in the cache key.
 
-### Anti-Pattern: Caching Based on Session or User Identity
+  ```typescript
+  // Cache key based on request parameters only — not user identity
+  function buildCacheKey(path: string, params: Record<string, string>): string {
+    const sortedParams = Object.entries(params)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join("&");
+    return `search:${path}:${sortedParams}`;
+  }
+  ```
 
-**What happens**: Developers create per-user caches for catalog data (e.g., caching product search results keyed by user ID).
+- **Setting extremely long cache TTLs without invalidation**: TTLs of hours or days mean price changes, stock updates, and new products are invisible to shoppers. Use moderate TTLs (2-15 minutes) combined with event-driven invalidation and `stale-while-revalidate`.
 
-**Why it fails**: Catalog data is the same for all anonymous users in the same trade policy. Creating per-user cache entries multiplies storage requirements by the number of users and eliminates the primary benefit of caching (serving the same response to many users). A store with 50,000 users and 1,000 unique searches would create 50 million cache entries instead of 1,000.
+  ```typescript
+  // Moderate TTL with stale-while-revalidate
+  const CACHE_CONFIG = {
+    search: { ttlSeconds: 120, swrSeconds: 60 },      // 2 min + 1 min SWR
+    categories: { ttlSeconds: 900, swrSeconds: 300 },  // 15 min + 5 min SWR
+    product: { ttlSeconds: 300, swrSeconds: 60 },       // 5 min + 1 min SWR
+    topSearches: { ttlSeconds: 600, swrSeconds: 120 },  // 10 min + 2 min SWR
+  } as const;
+  ```
 
-**Fix**: Cache public API responses by request URL/params only, not by user. Only skip cache or add user context for personalized pricing scenarios tied to specific trade policies.
+- **No cache monitoring or observability**: Without measuring hit/miss/stale rates, you cannot tell if caching is effective or if TTLs are appropriate. Add `X-Cache` headers and track metrics in your observability platform.
 
-```typescript
-// Cache key based on request parameters only — not user identity
-function buildCacheKey(path: string, params: Record<string, string>): string {
-  const sortedParams = Object.entries(params)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join("&");
-  return `search:${path}:${sortedParams}`;
-}
+  ```typescript
+  // Add cache observability to every cached response
+  interface CacheMetrics {
+    hits: number;
+    misses: number;
+    stale: number;
+  }
 
-// For trade-policy-specific pricing, include trade policy (not user ID)
-function buildTradePolicyCacheKey(path: string, params: Record<string, string>, tradePolicy: string): string {
-  return `search:tp${tradePolicy}:${path}:${new URLSearchParams(params).toString()}`;
-}
-```
+  const metrics: CacheMetrics = { hits: 0, misses: 0, stale: 0 };
 
----
+  export function getCacheMetrics(): CacheMetrics & { hitRate: string } {
+    const total = metrics.hits + metrics.misses + metrics.stale;
+    const hitRate = total > 0 ? ((metrics.hits / total) * 100).toFixed(1) + "%" : "N/A";
+    return { ...metrics, hitRate };
+  }
+  ```
 
-### Anti-Pattern: Setting Extremely Long Cache TTLs Without Invalidation
+## Review checklist
 
-**What happens**: Developers set cache TTLs of hours or days to maximize cache hit rates, but provide no invalidation mechanism.
-
-**Why it fails**: Long TTLs mean that price changes, stock updates, and new product launches are invisible to shoppers for hours or days. A product that sells out continues to appear available. A flash sale price doesn't take effect until the cache expires. This leads to failed orders, customer frustration, and potential legal issues with displayed pricing.
-
-**Fix**: Use moderate TTLs (2-15 minutes for search, 5-15 minutes for catalog) combined with event-driven invalidation. The `stale-while-revalidate` pattern allows instant responses while still checking for fresh data regularly.
-
-```typescript
-// Moderate TTL with stale-while-revalidate — balances freshness and performance
-const CACHE_CONFIG = {
-  search: { ttlSeconds: 120, swrSeconds: 60 },      // 2 min + 1 min SWR
-  categories: { ttlSeconds: 900, swrSeconds: 300 },  // 15 min + 5 min SWR
-  product: { ttlSeconds: 300, swrSeconds: 60 },       // 5 min + 1 min SWR
-  topSearches: { ttlSeconds: 600, swrSeconds: 120 },  // 10 min + 2 min SWR
-} as const;
-```
-
----
-
-### Anti-Pattern: No Cache Monitoring or Observability
-
-**What happens**: Developers implement caching but have no way to measure cache hit rates, miss rates, or stale-serve rates.
-
-**Why it fails**: Without monitoring, you cannot tell if caching is effective, if TTLs are appropriate, or if cache invalidation is working. A cache with a 5% hit rate provides almost no benefit while adding complexity. A cache that never invalidates may be serving stale data without anyone noticing.
-
-**Fix**: Add cache status headers and logging to track hit/miss/stale rates. Monitor these metrics in your observability platform.
-
-```typescript
-// Add cache observability to every cached response
-import { Request, Response, NextFunction } from "express";
-
-interface CacheMetrics {
-  hits: number;
-  misses: number;
-  stale: number;
-}
-
-const metrics: CacheMetrics = { hits: 0, misses: 0, stale: 0 };
-
-export function trackCacheMetrics(req: Request, res: Response, next: NextFunction): void {
-  const originalJson = res.json.bind(res);
-
-  res.json = function (body: unknown) {
-    const cacheStatus = res.getHeader("X-Cache") as string;
-
-    if (cacheStatus === "HIT") metrics.hits++;
-    else if (cacheStatus === "MISS") metrics.misses++;
-    else if (cacheStatus === "STALE") metrics.stale++;
-
-    return originalJson(body);
-  };
-
-  next();
-}
-
-// Expose metrics endpoint for monitoring
-export function getCacheMetrics(): CacheMetrics & { hitRate: string } {
-  const total = metrics.hits + metrics.misses + metrics.stale;
-  const hitRate = total > 0 ? ((metrics.hits / total) * 100).toFixed(1) + "%" : "N/A";
-  return { ...metrics, hitRate };
-}
-```
+- [ ] Are all public, read-only API responses (Search, Catalog) cached at CDN and/or BFF level?
+- [ ] Are transactional/personal API responses (Checkout, Profile, OMS, Payments) explicitly NOT cached with `no-store` headers?
+- [ ] Do all caches have bounded TTLs (not permanent/infinite)?
+- [ ] Is there a cache invalidation mechanism (TTL + event-driven or manual purge)?
+- [ ] Are cache keys based on request parameters, not user identity?
+- [ ] Is `stale-while-revalidate` used for the best freshness/performance balance?
+- [ ] Are TTLs moderate (2-15 minutes) rather than extremely long (hours/days)?
+- [ ] Is cache observability in place (X-Cache headers, hit/miss metrics)?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [How the cache works](https://help.vtex.com/en/docs/tutorials/understanding-how-the-cache-works) — VTEX native caching behavior and cache layer architecture
 - [Cloud infrastructure](https://developers.vtex.com/docs/guides/cloud-infrastructure) — VTEX CDN, router, and caching infrastructure overview
@@ -1335,38 +1132,30 @@ This skill provides guidance for AI agents working with VTEX Headless Front-End 
 
 # Checkout API Proxy & OrderForm Management
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: How to securely proxy VTEX Checkout API operations through a BFF layer in headless implementations, including OrderForm lifecycle management, cart operations, order placement, and the checkout completion flow.
+Use this skill when building cart and checkout functionality for any headless VTEX storefront. Every cart and checkout operation must go through the BFF.
 
-**When to use it**: When building any headless storefront that needs shopping cart and checkout functionality. Every cart and checkout operation must go through the BFF — the Checkout API handles sensitive customer data (profile, address, payment) and must never be called directly from client-side code.
+- Implementing cart creation, item add/update/remove operations
+- Attaching profile, shipping, or payment data to an OrderForm
+- Implementing the 3-step order placement flow (place → pay → process)
+- Managing `orderFormId` and `CheckoutOrderFormOwnership` cookies server-side
 
-**What you'll learn**:
-- The OrderForm data structure and its lifecycle from cart creation to order placement
-- How to proxy all Checkout API operations through the BFF securely
-- How to manage `orderFormId` and `CheckoutOrderFormOwnership` cookie server-side
-- How to validate inputs server-side before forwarding to VTEX
+Do not use this skill for:
+- General BFF architecture and API routing (use [`headless-bff-architecture`](../headless-bff-architecture/skill.md))
+- Search API integration (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
+- Caching strategy decisions (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- ALL Checkout API calls MUST be proxied through the BFF — no exceptions. The Checkout API handles sensitive personal data (profile, address, payment).
+- Store `orderFormId` in a server-side session, never in `localStorage` or `sessionStorage`.
+- Capture and forward `CheckoutOrderFormOwnership` and `checkout.vtex.com` cookies between the BFF and VTEX on every request.
+- Validate all inputs server-side before forwarding to VTEX — never pass raw `req.body` directly.
+- Execute the 3-step order placement flow (place order → send payment → process order) in a single synchronous BFF handler to stay within the **5-minute window**.
+- Always store and reuse the existing `orderFormId` from the session — only create a new cart when no `orderFormId` exists.
 
-### Concept 1: The OrderForm
-
-The `orderForm` is the central data structure of VTEX Checkout. It contains every piece of information about a purchase:
-
-- **items**: Products in the cart (SKU ID, quantity, seller, price)
-- **clientProfileData**: Customer profile (email, name, document, phone)
-- **shippingData**: Delivery address and selected shipping option
-- **paymentData**: Payment method, installments, card info
-- **marketingData**: Coupons, UTM parameters
-- **totalizers**: Subtotals, discounts, shipping costs
-
-Each `orderForm` has a unique `orderFormId` that identifies the cart. When you call `GET /api/checkout/pub/orderForm`, VTEX either returns the current cart (if one exists for the session) or creates a new one.
-
-### Concept 2: OrderForm Sections (Attachments)
-
-Cart data is organized into "attachments" — sections of the OrderForm that can be updated independently:
+OrderForm attachment endpoints:
 
 | Attachment | Endpoint | Purpose |
 |---|---|---|
@@ -1376,58 +1165,22 @@ Cart data is organized into "attachments" — sections of the OrderForm that can
 | paymentData | `POST .../orderForm/{id}/attachments/paymentData` | Payment method selection |
 | marketingData | `POST .../orderForm/{id}/attachments/marketingData` | Coupons and UTM data |
 
-Each attachment update returns the full updated `orderForm`, so you always have the current state.
+## Hard constraints
 
-### Concept 3: Order Placement Flow
+### Constraint: ALL checkout operations MUST go through BFF
 
-Placing an order in VTEX follows a strict 3-step sequence that must complete within 5 minutes:
+Client-side code MUST NOT make direct HTTP requests to any VTEX Checkout API endpoint (`/api/checkout/`). All checkout operations — cart creation, item management, profile updates, shipping, payment, and order placement — must be proxied through the BFF layer.
 
-1. **Place order**: `POST /api/checkout/pub/orderForm/{orderFormId}/transaction` — Creates the order from the cart
-2. **Send payment**: `POST /api/payments/transactions/{transactionId}/payments` — Sends payment details to the gateway
-3. **Process order**: `POST /api/checkout/pub/gatewayCallback/{orderGroup}` — Triggers order processing
+**Why this matters**
 
-If steps 2 and 3 are not completed within 5 minutes of step 1, the order is automatically canceled and marked as `incomplete`.
+Checkout endpoints handle sensitive personal data (email, address, phone, payment details). Direct frontend calls expose the request/response flow to browser DevTools, extensions, and XSS attacks. Additionally, the BFF layer is needed to manage `VtexIdclientAutCookie` and `CheckoutOrderFormOwnership` cookies server-side, validate inputs, and prevent cart manipulation (e.g., price tampering).
 
-### Concept 4: CheckoutOrderFormOwnership Cookie
+**Detection**
 
-When a new cart is created, VTEX sends a `CheckoutOrderFormOwnership` cookie alongside the `checkout.vtex.com` cookie. This cookie ensures that only the customer who created the cart can access their personal information (profile, address). Without it, personal data in the OrderForm is masked.
+If you see `fetch` or `axios` calls to `/api/checkout/` in any client-side code (browser-executed JavaScript, frontend source files) → STOP immediately. All checkout calls must route through BFF endpoints.
 
-In a headless BFF, you must:
-1. Capture the `CheckoutOrderFormOwnership` cookie from VTEX responses
-2. Store it in the server-side session alongside the `orderFormId`
-3. Forward it back to VTEX on subsequent checkout requests
+**Correct**
 
-**Architecture/Data Flow**:
-
-```text
-Frontend
-    │
-    └── POST /api/bff/cart/items/add  {skuId, quantity, seller}
-            │
-            BFF Layer
-            │ 1. Validates input (skuId format, quantity > 0, seller exists)
-            │ 2. Reads orderFormId from server-side session
-            │ 3. Forwards CheckoutOrderFormOwnership cookie
-            │ 4. Calls VTEX: POST /api/checkout/pub/orderForm/{id}/items
-            │ 5. Updates session with new orderFormId if changed
-            │ 6. Returns sanitized orderForm to frontend
-            │
-            VTEX Checkout API
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: ALL Checkout Operations MUST Go Through BFF
-
-**Rule**: Client-side code MUST NOT make direct HTTP requests to any VTEX Checkout API endpoint (`/api/checkout/`). All checkout operations — cart creation, item management, profile updates, shipping, payment, and order placement — must be proxied through the BFF layer.
-
-**Why**: Checkout endpoints handle sensitive personal data (email, address, phone, payment details). Direct frontend calls expose the request/response flow to browser DevTools, extensions, and XSS attacks. Additionally, the BFF layer is needed to manage `VtexIdclientAutCookie` and `CheckoutOrderFormOwnership` cookies server-side, validate inputs, and prevent cart manipulation (e.g., price tampering).
-
-**Detection**: If you see `fetch` or `axios` calls to `/api/checkout/` in any client-side code (browser-executed JavaScript, frontend source files) → STOP immediately. All checkout calls must route through BFF endpoints.
-
-✅ **CORRECT**:
 ```typescript
 // Frontend — calls BFF endpoint, never VTEX directly
 async function addItemToCart(skuId: string, quantity: number, seller: string): Promise<OrderForm> {
@@ -1446,7 +1199,8 @@ async function addItemToCart(skuId: string, quantity: number, seller: string): P
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend — calls VTEX Checkout API directly (SECURITY VULNERABILITY)
 async function addItemToCart(skuId: string, quantity: number, seller: string): Promise<OrderForm> {
@@ -1467,15 +1221,20 @@ async function addItemToCart(skuId: string, quantity: number, seller: string): P
 
 ---
 
-### Constraint: orderFormId MUST Be Managed Server-Side
+### Constraint: orderFormId MUST be managed server-side
 
-**Rule**: The `orderFormId` MUST be stored in a secure server-side session. It SHOULD NOT be stored in `localStorage`, `sessionStorage`, or exposed to the frontend in a way that allows direct VTEX API calls.
+The `orderFormId` MUST be stored in a secure server-side session. It SHOULD NOT be stored in `localStorage`, `sessionStorage`, or exposed to the frontend in a way that allows direct VTEX API calls.
 
-**Why**: The `orderFormId` is the key to a customer's shopping cart and all data within it — profile information, shipping address, payment details. If exposed client-side, an attacker could use it to query VTEX directly and retrieve personal data, or manipulate the cart by adding/removing items through direct API calls bypassing any validation logic.
+**Why this matters**
 
-**Detection**: If you see `orderFormId` stored in `localStorage` or `sessionStorage` → STOP immediately. It should be managed in the BFF session.
+The `orderFormId` is the key to a customer's shopping cart and all data within it — profile information, shipping address, payment details. If exposed client-side, an attacker could use it to query VTEX directly and retrieve personal data, or manipulate the cart by adding/removing items through direct API calls bypassing any validation logic.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `orderFormId` stored in `localStorage` or `sessionStorage` → STOP immediately. It should be managed in the BFF session.
+
+**Correct**
+
 ```typescript
 // BFF — manages orderFormId in server-side session
 import { Router, Request, Response } from "express";
@@ -1524,7 +1283,8 @@ function sanitizeOrderForm(orderForm: Record<string, unknown>): Record<string, u
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend — stores orderFormId in localStorage (INSECURE)
 async function getCart(): Promise<OrderForm> {
@@ -1548,15 +1308,20 @@ async function getCart(): Promise<OrderForm> {
 
 ---
 
-### Constraint: MUST Validate All Inputs Server-Side
+### Constraint: MUST validate all inputs server-side before forwarding to VTEX
 
-**Rule**: The BFF MUST validate all input data before forwarding requests to the VTEX Checkout API. This includes validating SKU IDs, quantities, email formats, address fields, and coupon codes.
+The BFF MUST validate all input data before forwarding requests to the VTEX Checkout API. This includes validating SKU IDs, quantities, email formats, address fields, and coupon codes.
 
-**Why**: Without server-side validation, malicious users can send crafted requests through the BFF to VTEX with invalid or manipulative data — negative quantities, SQL injection in text fields, or spoofed seller IDs. While VTEX has its own validation, defense-in-depth requires validating at the BFF layer to catch issues early and provide clear error messages.
+**Why this matters**
 
-**Detection**: If BFF route handlers pass `req.body` directly to VTEX API calls without any validation or sanitization → STOP immediately. All inputs must be validated before proxying.
+Without server-side validation, malicious users can send crafted requests through the BFF to VTEX with invalid or manipulative data — negative quantities, SQL injection in text fields, or spoofed seller IDs. While VTEX has its own validation, defense-in-depth requires validating at the BFF layer to catch issues early and provide clear error messages.
 
-✅ **CORRECT**:
+**Detection**
+
+If BFF route handlers pass `req.body` directly to VTEX API calls without any validation or sanitization → STOP immediately. All inputs must be validated before proxying.
+
+**Correct**
+
 ```typescript
 // BFF — validates inputs before forwarding to VTEX
 import { Router, Request, Response } from "express";
@@ -1619,7 +1384,8 @@ cartItemsRoutes.post("/", async (req: Request, res: Response) => {
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // BFF — passes raw input to VTEX without validation (UNSAFE)
 cartRoutes.post("/items", async (req: Request, res: Response) => {
@@ -1637,13 +1403,27 @@ cartRoutes.post("/items", async (req: Request, res: Response) => {
 });
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Request flow through the BFF for checkout operations:
 
-### Step 1: Create a VTEX Checkout API Client
+```text
+Frontend
+    │
+    └── POST /api/bff/cart/items/add  {skuId, quantity, seller}
+            │
+            BFF Layer
+            │ 1. Validates input (skuId format, quantity > 0, seller exists)
+            │ 2. Reads orderFormId from server-side session
+            │ 3. Forwards CheckoutOrderFormOwnership cookie
+            │ 4. Calls VTEX: POST /api/checkout/pub/orderForm/{id}/items
+            │ 5. Updates session with new orderFormId if changed
+            │ 6. Returns sanitized orderForm to frontend
+            │
+            VTEX Checkout API
+```
 
-Build a shared utility that handles authentication and cookie management for all Checkout API calls.
+VTEX Checkout API client with cookie management:
 
 ```typescript
 // server/vtex-checkout-client.ts
@@ -1718,9 +1498,7 @@ export async function vtexCheckout<T>(
 }
 ```
 
-### Step 2: Implement Cart Management BFF Routes
-
-Create BFF endpoints for all cart operations: get cart, add items, update items, remove items.
+Cart management BFF routes:
 
 ```typescript
 // server/routes/cart.ts
@@ -1728,22 +1506,6 @@ import { Router, Request, Response } from "express";
 import { vtexCheckout } from "../vtex-checkout-client";
 
 export const cartRoutes = Router();
-
-interface OrderForm {
-  orderFormId: string;
-  items: Array<{
-    id: string;
-    productId: string;
-    name: string;
-    quantity: number;
-    price: number;
-    imageUrl: string;
-    seller: string;
-  }>;
-  totalizers: Array<{ id: string; name: string; value: number }>;
-  value: number;
-  [key: string]: unknown;
-}
 
 // GET /api/bff/cart — get or create cart
 cartRoutes.get("/", async (req: Request, res: Response) => {
@@ -1803,45 +1565,9 @@ cartRoutes.post("/items", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Failed to add items to cart" });
   }
 });
-
-// PATCH /api/bff/cart/items/:index — update item quantity
-cartRoutes.patch("/items/:index", async (req: Request, res: Response) => {
-  const index = parseInt(req.params.index, 10);
-  const { quantity } = req.body as { quantity: number };
-
-  if (isNaN(index) || index < 0) {
-    return res.status(400).json({ error: "Invalid item index" });
-  }
-  if (typeof quantity !== "number" || quantity < 0) {
-    return res.status(400).json({ error: "Quantity must be a non-negative number" });
-  }
-
-  const orderFormId = req.session.orderFormId;
-  if (!orderFormId) {
-    return res.status(400).json({ error: "No active cart" });
-  }
-
-  try {
-    const result = await vtexCheckout<OrderForm>({
-      path: `/api/checkout/pub/orderForm/${orderFormId}/items/${index}`,
-      method: "PATCH",
-      body: { quantity },
-      cookies: req.session.vtexCookies || {},
-      userToken: req.session.vtexAuthToken,
-    });
-
-    req.session.vtexCookies = result.cookies;
-    res.json(result.data);
-  } catch (error) {
-    console.error("Error updating item:", error);
-    res.status(500).json({ error: "Failed to update cart item" });
-  }
-});
 ```
 
-### Step 3: Implement Order Placement BFF Route
-
-The order placement flow is a multi-step process that must complete within 5 minutes.
+Order placement — all 3 steps in a single handler to respect the **5-minute window**:
 
 ```typescript
 // server/routes/order.ts
@@ -1855,12 +1581,8 @@ const VTEX_ENVIRONMENT = process.env.VTEX_ENVIRONMENT || "vtexcommercestable";
 const VTEX_APP_KEY = process.env.VTEX_APP_KEY!;
 const VTEX_APP_TOKEN = process.env.VTEX_APP_TOKEN!;
 
-interface PlaceOrderResponse {
-  orders: Array<{ orderId: string; transactionData: { merchantTransactions: Array<{ transactionId: string }> } }>;
-  orderGroup: string;
-}
-
 // POST /api/bff/order/place — place order from existing cart
+// CRITICAL: All 3 steps must complete within 5 minutes or the order is canceled
 orderRoutes.post("/place", async (req: Request, res: Response) => {
   const orderFormId = req.session.orderFormId;
   if (!orderFormId) {
@@ -1868,7 +1590,7 @@ orderRoutes.post("/place", async (req: Request, res: Response) => {
   }
 
   try {
-    // Step 1: Place order from existing cart
+    // Step 1: Place order — starts the 5-minute timer
     const placeResult = await vtexCheckout<PlaceOrderResponse>({
       path: `/api/checkout/pub/orderForm/${orderFormId}/transaction`,
       method: "POST",
@@ -1887,7 +1609,7 @@ orderRoutes.post("/place", async (req: Request, res: Response) => {
     const transactionId =
       orders[0].transactionData.merchantTransactions[0]?.transactionId;
 
-    // Step 2: Send payment info (from frontend-provided payment data)
+    // Step 2: Send payment — immediately after placement
     const { paymentData } = req.body as {
       paymentData: {
         paymentSystem: number;
@@ -1928,8 +1650,8 @@ orderRoutes.post("/place", async (req: Request, res: Response) => {
       return res.status(500).json({ error: "Payment submission failed" });
     }
 
-    // Step 3: Process order (trigger gateway callback)
-    const processResult = await vtexCheckout<unknown>({
+    // Step 3: Process order — immediately after payment
+    await vtexCheckout<unknown>({
       path: `/api/checkout/pub/gatewayCallback/${orderGroup}`,
       method: "POST",
       cookies: req.session.vtexCookies || {},
@@ -1952,200 +1674,88 @@ orderRoutes.post("/place", async (req: Request, res: Response) => {
 });
 ```
 
-### Complete Example
+## Common failure modes
 
-Full BFF cart and checkout flow wired together:
+- **Creating a new cart on every page load**: Calling `GET /api/checkout/pub/orderForm` without an `orderFormId` on every page load creates a new empty cart each time, abandoning the previous one. Always store and reuse the `orderFormId` from the server-side session.
 
-```typescript
-// server/index.ts — mount all checkout routes
-import express from "express";
-import session from "express-session";
-import { cartRoutes } from "./routes/cart";
-import { orderRoutes } from "./routes/order";
+  ```typescript
+  // Always check for existing orderFormId first
+  cartRoutes.get("/", async (req: Request, res: Response) => {
+    const orderFormId = req.session.orderFormId;
 
-const app = express();
+    const path = orderFormId
+      ? `/api/checkout/pub/orderForm/${orderFormId}` // Retrieve existing cart
+      : "/api/checkout/pub/orderForm"; // Create new cart only if none exists
 
-app.use(express.json());
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET!,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: "strict",
-      maxAge: 24 * 60 * 60 * 1000,
-    },
-  })
-);
-
-// Cart routes: GET /api/bff/cart, POST /api/bff/cart/items, PATCH /api/bff/cart/items/:index
-app.use("/api/bff/cart", cartRoutes);
-
-// Order routes: POST /api/bff/order/place
-app.use("/api/bff/order", orderRoutes);
-
-// Attachment routes for profile, shipping, payment
-app.post("/api/bff/cart/profile", async (req, res) => {
-  const { email, firstName, lastName, document, documentType, phone } = req.body;
-
-  // Validate email format
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.status(400).json({ error: "Valid email is required" });
-  }
-
-  const orderFormId = req.session.orderFormId;
-  if (!orderFormId) {
-    return res.status(400).json({ error: "No active cart" });
-  }
-
-  const { vtexCheckout } = await import("./vtex-checkout-client");
-  const result = await vtexCheckout({
-    path: `/api/checkout/pub/orderForm/${orderFormId}/attachments/clientProfileData`,
-    method: "POST",
-    body: { email, firstName, lastName, document, documentType, phone },
-    cookies: req.session.vtexCookies || {},
-    userToken: req.session.vtexAuthToken,
-  });
-
-  req.session.vtexCookies = result.cookies;
-  res.json(result.data);
-});
-
-app.post("/api/bff/cart/shipping", async (req, res) => {
-  const { address, logisticsInfo } = req.body;
-
-  if (!address || !address.postalCode || !address.country) {
-    return res.status(400).json({ error: "Address with postalCode and country is required" });
-  }
-
-  const orderFormId = req.session.orderFormId;
-  if (!orderFormId) {
-    return res.status(400).json({ error: "No active cart" });
-  }
-
-  const { vtexCheckout } = await import("./vtex-checkout-client");
-  const result = await vtexCheckout({
-    path: `/api/checkout/pub/orderForm/${orderFormId}/attachments/shippingData`,
-    method: "POST",
-    body: {
-      clearAddressIfPostalCodeNotFound: false,
-      selectedAddresses: [address],
-      logisticsInfo: logisticsInfo || [],
-    },
-    cookies: req.session.vtexCookies || {},
-    userToken: req.session.vtexAuthToken,
-  });
-
-  req.session.vtexCookies = result.cookies;
-  res.json(result.data);
-});
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`BFF server running on port ${PORT}`);
-});
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Creating a New Cart on Every Page Load
-
-**What happens**: Developers call `GET /api/checkout/pub/orderForm` (without an `orderFormId`) on every page load, creating a new empty cart each time instead of retrieving the existing one.
-
-**Why it fails**: Each call without an `orderFormId` creates a new cart, abandoning the previous one. Items the shopper added are lost. VTEX creates orphaned orderForms that consume resources. The shopper must re-add all items every time they navigate.
-
-**Fix**: Always store and reuse the `orderFormId` from the server-side session. Only call the "create new cart" endpoint when no `orderFormId` exists.
-
-```typescript
-// Always check for existing orderFormId first
-cartRoutes.get("/", async (req: Request, res: Response) => {
-  const orderFormId = req.session.orderFormId;
-
-  const path = orderFormId
-    ? `/api/checkout/pub/orderForm/${orderFormId}` // Retrieve existing cart
-    : "/api/checkout/pub/orderForm"; // Create new cart only if none exists
-
-  const result = await vtexCheckout<OrderForm>({
-    path,
-    cookies: req.session.vtexCookies || {},
-    userToken: req.session.vtexAuthToken,
-  });
-
-  req.session.orderFormId = result.data.orderFormId;
-  req.session.vtexCookies = result.cookies;
-  res.json(result.data);
-});
-```
-
----
-
-### Anti-Pattern: Ignoring the 5-Minute Order Processing Window
-
-**What happens**: Developers place an order (step 1) but delay sending payment information or processing the order, exceeding the 5-minute window.
-
-**Why it fails**: VTEX automatically cancels orders that are not fully processed within 5 minutes of placement. The order is tagged as `incomplete` and the customer must start the checkout flow over. This creates a terrible user experience and potential inventory issues.
-
-**Fix**: Execute all three order placement steps (place order → send payment → process order) sequentially and immediately in a single BFF request handler. Never split these across multiple independent frontend calls.
-
-```typescript
-// Execute all 3 steps in a single, synchronous flow
-orderRoutes.post("/place", async (req: Request, res: Response) => {
-  try {
-    // Step 1: Place order — starts the 5-minute timer
-    const placeResult = await vtexCheckout<PlaceOrderResponse>({
-      path: `/api/checkout/pub/orderForm/${req.session.orderFormId}/transaction`,
-      method: "POST",
-      body: { referenceId: req.session.orderFormId },
+    const result = await vtexCheckout<OrderForm>({
+      path,
       cookies: req.session.vtexCookies || {},
+      userToken: req.session.vtexAuthToken,
     });
 
-    // Step 2: Send payment — immediately after placement
-    await sendPayment(placeResult.data);
+    req.session.orderFormId = result.data.orderFormId;
+    req.session.vtexCookies = result.cookies;
+    res.json(result.data);
+  });
+  ```
 
-    // Step 3: Process order — immediately after payment
-    await processOrder(placeResult.data.orderGroup);
+- **Ignoring the 5-minute order processing window**: Placing an order (step 1) but delaying payment or processing beyond 5 minutes causes VTEX to automatically cancel the order as `incomplete`. Execute all three steps (place order → send payment → process order) sequentially and immediately in a single BFF request handler. Never split these across multiple independent frontend calls.
 
-    res.json({ success: true, orderId: placeResult.data.orders[0].orderId });
-  } catch (error) {
-    console.error("Order placement failed:", error);
-    res.status(500).json({ error: "Order placement failed" });
+  ```typescript
+  // Execute all 3 steps in a single, synchronous flow
+  orderRoutes.post("/place", async (req: Request, res: Response) => {
+    try {
+      // Step 1: Place order — starts the 5-minute timer
+      const placeResult = await vtexCheckout<PlaceOrderResponse>({
+        path: `/api/checkout/pub/orderForm/${req.session.orderFormId}/transaction`,
+        method: "POST",
+        body: { referenceId: req.session.orderFormId },
+        cookies: req.session.vtexCookies || {},
+      });
+
+      // Step 2: Send payment — immediately after placement
+      await sendPayment(placeResult.data);
+
+      // Step 3: Process order — immediately after payment
+      await processOrder(placeResult.data.orderGroup);
+
+      res.json({ success: true, orderId: placeResult.data.orders[0].orderId });
+    } catch (error) {
+      console.error("Order placement failed:", error);
+      res.status(500).json({ error: "Order placement failed" });
+    }
+  });
+  ```
+
+- **Exposing raw VTEX error messages to the frontend**: Forwarding VTEX API error responses directly to the frontend leaks internal details (account names, API paths, data structures). Map VTEX errors to user-friendly messages in the BFF and log the full error server-side.
+
+  ```typescript
+  // Map VTEX errors to safe, user-friendly messages
+  function mapCheckoutError(vtexError: string, statusCode: number): { code: string; message: string } {
+    if (statusCode === 400 && vtexError.includes("item")) {
+      return { code: "INVALID_ITEM", message: "One or more items are unavailable" };
+    }
+    if (statusCode === 400 && vtexError.includes("address")) {
+      return { code: "INVALID_ADDRESS", message: "Please check your shipping address" };
+    }
+    if (statusCode === 409) {
+      return { code: "CART_CONFLICT", message: "Your cart was updated. Please review your items." };
+    }
+    return { code: "CHECKOUT_ERROR", message: "An error occurred during checkout. Please try again." };
   }
-});
-```
+  ```
 
----
+## Review checklist
 
-### Anti-Pattern: Exposing Raw VTEX Error Messages to Frontend
-
-**What happens**: Developers forward VTEX API error responses directly to the frontend without sanitization.
-
-**Why it fails**: VTEX error responses may contain internal implementation details, account names, API paths, or data structures that leak information about your backend architecture. This information can be used by attackers to craft targeted attacks.
-
-**Fix**: Map VTEX errors to user-friendly messages in the BFF. Log the full error server-side for debugging.
-
-```typescript
-// Map VTEX errors to safe, user-friendly messages
-function mapCheckoutError(vtexError: string, statusCode: number): { code: string; message: string } {
-  if (statusCode === 400 && vtexError.includes("item")) {
-    return { code: "INVALID_ITEM", message: "One or more items are unavailable" };
-  }
-  if (statusCode === 400 && vtexError.includes("address")) {
-    return { code: "INVALID_ADDRESS", message: "Please check your shipping address" };
-  }
-  if (statusCode === 409) {
-    return { code: "CART_CONFLICT", message: "Your cart was updated. Please review your items." };
-  }
-  return { code: "CHECKOUT_ERROR", message: "An error occurred during checkout. Please try again." };
-}
-```
+- [ ] Are ALL checkout API calls routed through the BFF (no direct frontend calls to `/api/checkout/`)?
+- [ ] Is `orderFormId` stored in a server-side session, not in `localStorage` or `sessionStorage`?
+- [ ] Are `CheckoutOrderFormOwnership` and `checkout.vtex.com` cookies captured from VTEX responses and forwarded on subsequent requests?
+- [ ] Are all inputs validated server-side before forwarding to VTEX?
+- [ ] Does the order placement handler execute all 3 steps (place → pay → process) in a single synchronous flow within the 5-minute window?
+- [ ] Is the existing `orderFormId` reused from the session rather than creating a new cart on every page load?
+- [ ] Are VTEX error responses sanitized before being sent to the frontend?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Headless cart and checkout](https://developers.vtex.com/docs/guides/headless-cart-and-checkout) — Complete guide to implementing cart and checkout in headless stores
 - [Checkout API reference](https://developers.vtex.com/docs/api-reference/checkout-api) — Full API reference for all Checkout endpoints
@@ -2160,40 +1770,29 @@ This skill provides guidance for AI agents working with VTEX Headless Front-End 
 
 # Intelligent Search API Integration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The VTEX Intelligent Search API — the only VTEX API that is fully public and designed for direct frontend consumption. Covers all search endpoints, query parameters, response structures, faceted navigation, and the critical requirement to send analytics events.
+Use this skill when implementing product search, category browsing, autocomplete, or faceted filtering in a headless VTEX storefront.
 
-**When to use it**: When implementing product search, category browsing, autocomplete, or faceted filtering in a headless VTEX storefront. This is the search solution for any custom headless frontend.
+- Building a search results page with product listings
+- Implementing faceted navigation (category, brand, price, color filters)
+- Adding autocomplete suggestions to a search input
+- Wiring up search analytics events for Intelligent Search ranking
 
-**What you'll learn**:
-- All Intelligent Search API endpoints and their purposes
-- How to implement faceted navigation with proper query parameters
-- How to paginate results correctly using `from`/`to` parameters
-- Why analytics events are mandatory and how to send them via the Intelligent Search Events API - Headless
+Do not use this skill for:
+- BFF architecture and API routing decisions (use [`headless-bff-architecture`](../headless-bff-architecture/skill.md))
+- Checkout or cart API integration (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
+- Caching strategy and TTL configuration (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Call Intelligent Search **directly from the frontend** — it is the ONE exception to the "everything through BFF" rule. It is fully public and requires no authentication.
+- Do NOT proxy Intelligent Search through the BFF unless you have a specific need (e.g., server-side rendering). Proxying adds latency on a high-frequency operation.
+- Always use the API's `sort` parameter and facet paths for filtering and sorting — never re-sort or re-filter results client-side.
+- Always include `from`, `to`, and `locale` parameters in every search request.
+- Always send analytics events to the Intelligent Search Events API — without them, search ranking degrades over time.
 
-### Concept 1: Intelligent Search Is a PUBLIC API
-
-Unlike most VTEX APIs, Intelligent Search does **not** require API keys or authentication tokens. It is designed to be called directly from the frontend. The base URL pattern is:
-
-```text
-https://{accountName}.{environment}.com.br/api/io/_v/api/intelligent-search/{endpoint}
-```
-
-This means:
-- **No BFF proxy needed** for search queries (and proxying adds unnecessary latency)
-- Results are CDN-cacheable for better performance
-- No risk of credential exposure
-
-This is the ONE exception to the "everything through BFF" rule in headless VTEX architecture.
-
-### Concept 2: Search Endpoints
-
-Intelligent Search provides these core endpoints:
+Search endpoints overview:
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -2205,60 +1804,26 @@ Intelligent Search provides these core endpoints:
 | `/search_suggestions` | GET | Get suggested terms similar to the search term |
 | `/banners/{facets}` | GET | Get banners configured for a query |
 
-### Concept 3: Faceted Navigation
-
-Facets are the combination of filters applied to a search. The `facets` path parameter follows the format:
-
-```text
-/{facetKey1}/{facetValue1}/{facetKey2}/{facetValue2}
-```
-
-Filter combination rules:
+Facet combination rules:
 - **Same facet type → OR (union)**: Selecting "Red" and "Blue" for color returns products matching either color
 - **Different facet types → AND (intersection)**: Selecting "Red" color and "Nike" brand returns only red Nike products
 
-Common facet keys include: `category-1`, `category-2`, `brand`, `price`, `productClusterIds`, and custom specifications configured as filterable in Intelligent Search settings.
+## Hard constraints
 
-### Concept 4: Analytics Events (Mandatory)
+### Constraint: MUST send analytics events to Intelligent Search Events API
 
-Intelligent Search improves results based on shopper behavior. For headless implementations, you **must** send analytics events using the **Intelligent Search Events API - Headless**. Without events, search ranking cannot learn and results degrade over time.
+Every headless search implementation MUST send analytics events to the Intelligent Search Events API - Headless. At minimum, send search impression events when results are displayed and click events when a product is selected from search results.
 
-The events API base URL is:
-```text
-https://sp.vtex.com/event-api/v1/{accountName}/event
-```
+**Why this matters**
 
-**Architecture/Data Flow**:
+Intelligent Search uses machine learning to rank results based on user behavior. Without analytics events, the search engine has no behavioral data and cannot personalize or optimize results. Over time, search quality degrades compared to stores that send events. Additionally, VTEX Admin search analytics dashboards will show no data.
 
-```text
-Frontend (Browser)
-    │
-    ├── GET /api/io/_v/api/intelligent-search/product_search/...
-    │   └── Returns: products, facets, pagination info
-    │
-    ├── GET /api/io/_v/api/intelligent-search/facets/...
-    │   └── Returns: available filters with counts
-    │
-    ├── GET /api/io/_v/api/intelligent-search/autocomplete_suggestions?query=...
-    │   └── Returns: suggested terms + suggested products
-    │
-    └── POST https://sp.vtex.com/event-api/v1/{account}/event
-        └── Sends: search impressions, clicks, add-to-cart events
-```
+**Detection**
 
-## Constraints
+If a search implementation renders results from Intelligent Search but has no calls to `sp.vtex.com/event-api` or the Intelligent Search Events API → STOP immediately. Analytics events must be implemented alongside search.
 
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+**Correct**
 
-### Constraint: MUST Send Analytics Events
-
-**Rule**: Every headless search implementation MUST send analytics events to the Intelligent Search Events API - Headless. At minimum, send search impression events when results are displayed and click events when a product is selected from search results.
-
-**Why**: Intelligent Search uses machine learning to rank results based on user behavior. Without analytics events, the search engine has no behavioral data and cannot personalize or optimize results. Over time, search quality degrades compared to stores that send events. Additionally, VTEX Admin search analytics dashboards will show no data.
-
-**Detection**: If a search implementation renders results from Intelligent Search but has no calls to `sp.vtex.com/event-api` or the Intelligent Search Events API → STOP immediately. Analytics events must be implemented alongside search.
-
-✅ **CORRECT**:
 ```typescript
 // search-analytics.ts — sends events to Intelligent Search Events API
 const ACCOUNT_NAME = "mystore";
@@ -2309,7 +1874,8 @@ function onSearchResultsRendered(query: string, products: Product[]): void {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Search works but NO analytics events are sent — search ranking degrades
 async function searchProducts(query: string): Promise<Product[]> {
@@ -2324,15 +1890,20 @@ async function searchProducts(query: string): Promise<Product[]> {
 
 ---
 
-### Constraint: MUST Paginate Results Correctly
+### Constraint: MUST paginate results with `from` and `to` parameters
 
-**Rule**: Every product search request MUST include `from` and `to` query parameters to control pagination. The maximum page size is 50 items (`to - from` must not exceed 49, since indices are inclusive and zero-based).
+Every product search request MUST include `from` and `to` query parameters to control pagination. The maximum page size is 50 items (`to - from` must not exceed 49, since indices are inclusive and zero-based).
 
-**Why**: Without pagination parameters, the API defaults to a small result set. Requesting too many results in a single call (or not paginating at all) causes slow responses, high memory usage on the client, and poor user experience. Additionally, the API enforces a maximum of 50 items per request.
+**Why this matters**
 
-**Detection**: If a call to `/product_search/` does not include `from` and `to` query parameters → STOP immediately. Pagination must always be explicit.
+Without pagination parameters, the API defaults to a small result set. Requesting too many results in a single call (or not paginating at all) causes slow responses, high memory usage on the client, and poor user experience. The API enforces a maximum of 50 items per request.
 
-✅ **CORRECT**:
+**Detection**
+
+If a call to `/product_search/` does not include `from` and `to` query parameters → STOP immediately. Pagination must always be explicit.
+
+**Correct**
+
 ```typescript
 // Properly paginated search with from/to parameters
 interface SearchOptions {
@@ -2375,7 +1946,8 @@ const results = await searchProducts({
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // No pagination — returns default small result set, no way to load more
 async function searchProducts(query: string): Promise<SearchResponse> {
@@ -2389,15 +1961,20 @@ async function searchProducts(query: string): Promise<SearchResponse> {
 
 ---
 
-### Constraint: Do NOT Unnecessarily Proxy Intelligent Search Through BFF
+### Constraint: Do NOT unnecessarily proxy Intelligent Search through BFF
 
-**Rule**: Intelligent Search API requests SHOULD be made directly from the frontend. Do not route search traffic through the BFF unless you have a specific need (e.g., server-side rendering, adding custom business logic).
+Intelligent Search API requests SHOULD be made directly from the frontend. Do not route search traffic through the BFF unless you have a specific need (e.g., server-side rendering, adding custom business logic).
 
-**Why**: Intelligent Search is a public API that does not require authentication. Adding a BFF proxy layer introduces an additional network hop, increases latency on every search operation, adds server cost, and prevents the CDN from caching responses efficiently. Search queries are high-frequency operations — even 50ms of added latency impacts conversion.
+**Why this matters**
 
-**Detection**: If all Intelligent Search calls go through a BFF endpoint instead of directly to VTEX → note this to the developer. It is not a security issue but a performance concern. If there is no justification (like SSR), recommend direct frontend calls.
+Intelligent Search is a public API that does not require authentication. Adding a BFF proxy layer introduces an additional network hop, increases latency on every search operation, adds server cost, and prevents the CDN from caching responses efficiently. Search queries are high-frequency operations — even 50ms of added latency impacts conversion.
 
-✅ **CORRECT**:
+**Detection**
+
+If all Intelligent Search calls go through a BFF endpoint instead of directly to VTEX → note this to the developer. It is not a security issue but a performance concern. If there is no justification (like SSR), recommend direct frontend calls.
+
+**Correct**
+
 ```typescript
 // Frontend — calls Intelligent Search directly (no BFF needed)
 const VTEX_SEARCH_BASE = `https://${ACCOUNT}.vtexcommercestable.com.br/api/io/_v/api/intelligent-search`;
@@ -2421,7 +1998,8 @@ export async function getFacets(facetPath: string, query: string, locale: string
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // BFF proxy for Intelligent Search — unnecessary overhead
 // server/routes/search.ts
@@ -2436,13 +2014,27 @@ router.get("/api/bff/search", async (req, res) => {
 });
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Data flow for Intelligent Search in a headless storefront:
 
-### Step 1: Create a Search API Client
+```text
+Frontend (Browser)
+    │
+    ├── GET /api/io/_v/api/intelligent-search/product_search/...
+    │   └── Returns: products, facets, pagination info
+    │
+    ├── GET /api/io/_v/api/intelligent-search/facets/...
+    │   └── Returns: available filters with counts
+    │
+    ├── GET /api/io/_v/api/intelligent-search/autocomplete_suggestions?query=...
+    │   └── Returns: suggested terms + suggested products
+    │
+    └── POST https://sp.vtex.com/event-api/v1/{account}/event
+        └── Sends: search impressions, clicks, add-to-cart events
+```
 
-Build a typed client for all Intelligent Search endpoints. This runs in the frontend.
+Typed search API client for all endpoints:
 
 ```typescript
 // lib/intelligent-search-client.ts
@@ -2458,54 +2050,6 @@ interface ProductSearchParams {
   facets?: string;
   sort?: "price:asc" | "price:desc" | "orders:desc" | "name:asc" | "name:desc" | "release:desc" | "discount:desc";
   hideUnavailableItems?: boolean;
-}
-
-interface SearchProduct {
-  productId: string;
-  productName: string;
-  brand: string;
-  brandId: number;
-  link: string;
-  linkText: string;
-  categories: string[];
-  priceRange: {
-    sellingPrice: { highPrice: number; lowPrice: number };
-    listPrice: { highPrice: number; lowPrice: number };
-  };
-  items: Array<{
-    itemId: string;
-    name: string;
-    images: Array<{ imageUrl: string; imageLabel: string }>;
-    sellers: Array<{
-      sellerId: string;
-      sellerName: string;
-      commertialOffer: {
-        Price: number;
-        ListPrice: number;
-        AvailableQuantity: number;
-      };
-    }>;
-  }>;
-}
-
-interface ProductSearchResponse {
-  products: SearchProduct[];
-  recordsFiltered: number;
-  correction?: { misspelled: boolean };
-  fuzzy: string;
-  operator: string;
-  translated: boolean;
-  pagination: {
-    count: number;
-    current: { index: number; proxyUrl: string };
-    before: Array<{ index: number; proxyUrl: string }>;
-    after: Array<{ index: number; proxyUrl: string }>;
-    perPage: number;
-    next: { index: number; proxyUrl: string };
-    previous: { index: number; proxyUrl: string };
-    first: { index: number; proxyUrl: string };
-    last: { index: number; proxyUrl: string };
-  };
 }
 
 export async function productSearch(params: ProductSearchParams): Promise<ProductSearchResponse> {
@@ -2530,39 +2074,10 @@ export async function productSearch(params: ProductSearchParams): Promise<Produc
 }
 ```
 
-### Step 2: Implement Faceted Navigation
-
-Fetch available facets for the current query and render filter UI. Update the search when filters change.
+Faceted navigation helper:
 
 ```typescript
 // lib/facets.ts
-interface FacetValue {
-  id: string;
-  quantity: number;
-  name: string;
-  key: string;
-  value: string;
-  selected: boolean;
-  href: string;
-}
-
-interface Facet {
-  type: "TEXT" | "NUMBER" | "PRICERANGE";
-  name: string;
-  hidden: boolean;
-  quantity: number;
-  values: FacetValue[];
-}
-
-interface FacetsResponse {
-  facets: Facet[];
-  breadcrumb: Array<{ name: string; href: string }>;
-  queryArgs: {
-    query: string;
-    map: string;
-  };
-}
-
 export async function getFacets(
   facetPath: string,
   query: string,
@@ -2590,42 +2105,10 @@ export function buildFacetPath(selectedFilters: Record<string, string[]>): strin
 }
 ```
 
-### Step 3: Implement Autocomplete
-
-Wire up the autocomplete endpoint to your search input for real-time suggestions.
+Debounced autocomplete for search inputs:
 
 ```typescript
 // lib/autocomplete.ts
-interface AutocompleteSuggestion {
-  term: string;
-  count: number;
-  attributes: Array<{
-    key: string;
-    value: string;
-    labelKey: string;
-    labelValue: string;
-  }>;
-}
-
-interface AutocompleteResponse {
-  searches: AutocompleteSuggestion[];
-}
-
-export async function getAutocompleteSuggestions(
-  query: string,
-  locale: string
-): Promise<AutocompleteResponse> {
-  const params = new URLSearchParams({ query, locale });
-  const url = `${BASE_URL}/autocomplete_suggestions?${params}`;
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Autocomplete failed: ${response.status}`);
-  }
-  return response.json();
-}
-
-// Debounced autocomplete for use in search inputs
 export function createDebouncedAutocomplete(delayMs: number = 300) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -2642,21 +2125,21 @@ export function createDebouncedAutocomplete(delayMs: number = 300) {
     }
 
     timeoutId = setTimeout(async () => {
-      const suggestions = await getAutocompleteSuggestions(query, locale);
+      const params = new URLSearchParams({ query, locale });
+      const response = await fetch(`${BASE_URL}/autocomplete_suggestions?${params}`);
+      const suggestions = await response.json();
       callback(suggestions);
     }, delayMs);
   };
 }
 ```
 
-### Complete Example
-
-A full search implementation with products, facets, autocomplete, and analytics:
+Full search orchestration with analytics:
 
 ```typescript
 // search-page.ts — framework-agnostic search orchestration
-import { productSearch, ProductSearchResponse } from "./lib/intelligent-search-client";
-import { getFacets, buildFacetPath, FacetsResponse } from "./lib/facets";
+import { productSearch } from "./lib/intelligent-search-client";
+import { getFacets, buildFacetPath } from "./lib/facets";
 import { createDebouncedAutocomplete } from "./lib/autocomplete";
 import { sendSearchEvent } from "./search-analytics";
 
@@ -2666,7 +2149,6 @@ interface SearchState {
   pageSize: number;
   locale: string;
   selectedFilters: Record<string, string[]>;
-  sort?: string;
   results: ProductSearchResponse | null;
   facets: FacetsResponse | null;
 }
@@ -2681,9 +2163,6 @@ const state: SearchState = {
   facets: null,
 };
 
-const debouncedAutocomplete = createDebouncedAutocomplete(300);
-
-// Execute search with current state
 async function executeSearch(): Promise<void> {
   const facetPath = buildFacetPath(state.selectedFilters);
 
@@ -2718,47 +2197,7 @@ async function executeSearch(): Promise<void> {
   });
 }
 
-// Handle search input
-function onSearchInput(query: string): void {
-  debouncedAutocomplete(query, state.locale, (suggestions) => {
-    // Render autocomplete dropdown — implementation depends on your UI framework
-    renderAutocomplete(suggestions);
-  });
-}
-
-// Handle search submit
-function onSearchSubmit(query: string): void {
-  state.query = query;
-  state.page = 0;
-  state.selectedFilters = {};
-  executeSearch();
-}
-
-// Handle filter toggle
-function onFilterToggle(facetKey: string, facetValue: string): void {
-  const current = state.selectedFilters[facetKey] || [];
-  const index = current.indexOf(facetValue);
-
-  if (index === -1) {
-    state.selectedFilters[facetKey] = [...current, facetValue];
-  } else {
-    state.selectedFilters[facetKey] = current.filter((v) => v !== facetValue);
-    if (state.selectedFilters[facetKey].length === 0) {
-      delete state.selectedFilters[facetKey];
-    }
-  }
-
-  state.page = 0;
-  executeSearch();
-}
-
-// Handle pagination
-function onPageChange(newPage: number): void {
-  state.page = newPage;
-  executeSearch();
-}
-
-// Handle product click from search results
+// Handle product click from search results — send click event
 function onProductClick(productId: string, position: number): void {
   sendSearchEvent({
     type: "search.click",
@@ -2772,85 +2211,64 @@ function onProductClick(productId: string, position: number): void {
     products: [{ productId, position }],
   });
 }
-
-// Placeholder render function — replace with your framework's rendering
-function renderAutocomplete(suggestions: { searches: Array<{ term: string }> }): void {
-  // Your framework-specific rendering logic here
-  console.log("Autocomplete suggestions:", suggestions.searches);
-}
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Not sending the `locale` parameter**: Without `locale`, Intelligent Search may return results in the wrong language or fail to apply locale-specific relevance rules. Multi-language stores will display mixed-language results. Always include `locale` in every request.
 
-### Anti-Pattern: Not Sending the `locale` Parameter
+  ```typescript
+  // Always include locale in search parameters
+  const params = new URLSearchParams({
+    query: "shoes",
+    locale: "en-US", // Required for correct language processing
+    from: "0",
+    to: "19",
+  });
+  ```
 
-**What happens**: Developers omit the `locale` query parameter from search requests.
+- **Loading all products at once**: Setting very large `from`/`to` ranges (e.g., 0 to 999) or infinite scroll without limits. The API limits results to 50 items per request. Use proper pagination with reasonable page sizes (12-24 items per page).
 
-**Why it fails**: Without `locale`, Intelligent Search may return results in the wrong language or fail to apply locale-specific relevance rules. Multi-language stores will display mixed-language results, and search terms may not be properly tokenized for the target language.
+  ```typescript
+  // Proper pagination with bounded page sizes
+  const PAGE_SIZE = 24; // Reasonable default
+  const MAX_PAGE_SIZE = 50; // API maximum
 
-**Fix**: Always include the `locale` parameter in every Intelligent Search request.
+  function getSearchPage(query: string, page: number, locale: string) {
+    const safePageSize = Math.min(PAGE_SIZE, MAX_PAGE_SIZE);
+    const from = page * safePageSize;
+    const to = from + safePageSize - 1;
 
-```typescript
-// Always include locale in search parameters
-const params = new URLSearchParams({
-  query: "shoes",
-  locale: "en-US", // Required for correct language processing
-  from: "0",
-  to: "19",
-});
-```
+    return productSearch({ query, from, to, locale });
+  }
+  ```
 
----
+- **Rebuilding search ranking logic client-side**: Fetching results and then re-sorting or re-filtering them in the frontend discards Intelligent Search's ranking intelligence. Client-side filtering only works on the current page, not the full catalog. Use the API's `sort` parameter and facet paths.
 
-### Anti-Pattern: Loading All Products at Once
+  ```typescript
+  // Use API-level sorting — don't re-sort in the frontend
+  const results = await productSearch({
+    query: "shirt",
+    sort: "price:asc", // API handles sorting across entire result set
+    locale: "en-US",
+    from: 0,
+    to: 23,
+    facets: "category-1/clothing/color/red", // API handles filtering across entire catalog
+  });
+  ```
 
-**What happens**: Developers set very large `from`/`to` ranges (e.g., 0 to 999) or implement infinite scroll that loads all results without limit.
+## Review checklist
 
-**Why it fails**: The Intelligent Search API limits results to 50 items per request. Even if it allowed more, sending large payloads degrades performance for both the API and the client. Users experience long load times and high memory consumption. Additionally, loading products beyond what is visible wastes bandwidth.
-
-**Fix**: Use proper pagination with reasonable page sizes (12-24 items per page) and lazy-load subsequent pages only when the user scrolls or clicks "next page."
-
-```typescript
-// Proper pagination with bounded page sizes
-const PAGE_SIZE = 24; // Reasonable default
-const MAX_PAGE_SIZE = 50; // API maximum
-
-function getSearchPage(query: string, page: number, locale: string) {
-  const safePageSize = Math.min(PAGE_SIZE, MAX_PAGE_SIZE);
-  const from = page * safePageSize;
-  const to = from + safePageSize - 1;
-
-  return productSearch({ query, from, to, locale });
-}
-```
-
----
-
-### Anti-Pattern: Rebuilding Search Ranking Logic Client-Side
-
-**What happens**: Developers fetch search results and then re-sort or re-filter them in the frontend instead of using the API's built-in `sort` parameter and facet paths.
-
-**Why it fails**: Intelligent Search's ranking algorithm considers relevance, sales velocity, availability, and shopper behavior. Client-side re-sorting discards this intelligence. Additionally, client-side filtering only works on the current page of results, not the full catalog — a user filtering by "Red" would only see red items from the current 24 results, not from all matching products.
-
-**Fix**: Use the API's `sort` parameter and facet path for all filtering and sorting. Let the search engine do what it was designed to do.
-
-```typescript
-// Use API-level sorting — don't re-sort in the frontend
-const results = await productSearch({
-  query: "shirt",
-  sort: "price:asc", // API handles sorting across entire result set
-  locale: "en-US",
-  from: 0,
-  to: 23,
-  facets: "category-1/clothing/color/red", // API handles filtering across entire catalog
-});
-```
+- [ ] Is Intelligent Search called directly from the frontend (not unnecessarily routed through BFF)?
+- [ ] Does every search request include `from`, `to`, and `locale` parameters?
+- [ ] Are analytics events sent to `sp.vtex.com/event-api` after search results render?
+- [ ] Are click events sent when a user selects a product from search results?
+- [ ] Is sorting done via the API's `sort` parameter rather than client-side re-sorting?
+- [ ] Is filtering done via facet paths rather than client-side filtering?
+- [ ] Is autocomplete debounced to avoid excessive API calls?
+- [ ] Are page sizes bounded to ≤ 50 items per request?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Headless catalog and search](https://developers.vtex.com/docs/guides/headless-catalog) — Overview of catalog browsing and search in headless stores
 - [Intelligent Search API reference](https://developers.vtex.com/docs/api-reference/intelligent-search-api) — Complete API reference for all search endpoints

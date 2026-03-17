@@ -6,47 +6,27 @@ alwaysApply: false
 
 # Catalog & SKU Integration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The complete SKU integration flow between an external seller and a VTEX marketplace, including catalog notifications, SKU suggestions, approval lifecycle, and price/inventory synchronization.
+Use this skill when building a seller connector that needs to push product catalog data into a VTEX marketplace, handle SKU approval workflows, or keep prices and inventory synchronized.
 
-**When to use it**: When building a seller connector that needs to push product catalog data into a VTEX marketplace, handle SKU approval workflows, or keep prices and inventory synchronized.
+- Building the Change Notification flow to register and update SKUs
+- Implementing the SKU suggestion lifecycle (send → pending → approved/denied)
+- Mapping product data to the VTEX catalog schema
+- Synchronizing prices and inventory via notification endpoints
 
-**What you'll learn**:
-- How to use the Change Notification endpoint to register and update SKUs
-- The SKU suggestion lifecycle (send → pending → approved/denied)
-- How to map product data to the VTEX catalog schema
-- How to synchronize prices and inventory via notification endpoints
+Do not use this skill for:
+- Marketplace-side catalog operations (direct Catalog API writes)
+- Order fulfillment or invoice handling (see `marketplace-fulfillment`)
+- Rate limiting patterns in isolation (see `marketplace-rate-limiting`)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
-
-### Concept 1: Change Notification Flow
-
-The `POST /api/catalog_system/pvt/skuseller/changenotification/{skuId}` endpoint is the entry point for all catalog integration. When called:
-- **200 OK** → The SKU already exists in the marketplace. The seller should update the SKU information.
-- **404 Not Found** → The SKU does not exist in the marketplace. The seller must send an SKU suggestion.
-
-This two-response pattern drives the entire integration: notify first, then either update or register based on the response.
-
-### Concept 2: SKU Suggestion Lifecycle
-
-The catalog is owned by the marketplace — the seller has no direct access. Every new SKU is sent as a **suggestion** via the `PUT Send SKU Suggestion` API. The lifecycle is:
-1. **Seller sends suggestion** with product name, SKU name, images, EAN, specifications
-2. **Suggestion enters "pending" state** in the marketplace's Received SKUs panel
-3. **Marketplace approves or denies** — approval creates an actual SKU in the catalog
-4. **Once approved**, the suggestion ceases to exist; the SKU can only be edited by the marketplace
-
-Suggestions can be updated by the seller only while still in pending state. Once approved or denied, updates require a new suggestion or direct marketplace action.
-
-### Concept 3: Price & Inventory Notifications
-
-Price and inventory changes use separate notification endpoints (not the catalog changenotification):
-- `POST /notificator/{sellerId}/changenotification/{skuId}/price` — notify price change
-- `POST /notificator/{sellerId}/changenotification/{skuId}/inventory` — notify inventory change
-
-After these notifications, the marketplace calls the seller's **Fulfillment Simulation** endpoint (`POST /pvt/orderForms/simulation`) to retrieve current data. This endpoint must respond within **2.5 seconds** or the product is considered unavailable.
+- Use `POST /api/catalog_system/pvt/skuseller/changenotification/{skuId}` as the entry point for all catalog integration. A **200 OK** means the SKU exists (update it); a **404 Not Found** means it does not (send a suggestion).
+- Use the `PUT Send SKU Suggestion` API to register new SKUs. The seller does not own the catalog — every new SKU must go through the suggestion/approval workflow.
+- Use separate notification endpoints for price and inventory changes (`/notificator/{sellerId}/changenotification/{skuId}/price` and `/inventory`), not the catalog changenotification.
+- After price/inventory notifications, the marketplace calls the seller's **Fulfillment Simulation** endpoint (`POST /pvt/orderForms/simulation`). This endpoint must respond within **2.5 seconds** or the product is considered unavailable.
+- Suggestions can only be updated while in "pending" state. Once approved or denied, the seller cannot modify them.
 
 **Architecture/Data Flow**:
 
@@ -65,19 +45,22 @@ Seller                          VTEX Marketplace
   │─── Response with price/stock ────▶│
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use SKU Integration API, Not Direct Catalog API
 
-**Rule**: External sellers MUST use the Change Notification + SKU Suggestion flow to integrate SKUs. Direct Catalog API writes (`POST /api/catalog/pvt/product` or `POST /api/catalog/pvt/stockkeepingunit`) are for marketplace-side operations only.
+External sellers MUST use the Change Notification + SKU Suggestion flow to integrate SKUs. Direct Catalog API writes (`POST /api/catalog/pvt/product` or `POST /api/catalog/pvt/stockkeepingunit`) are for marketplace-side operations only.
 
-**Why**: The seller does not own the catalog. Direct catalog writes will fail with 403 Forbidden or create orphaned entries that bypass the approval workflow. The suggestion mechanism ensures marketplace quality control.
+**Why this matters**
 
-**Detection**: If you see direct Catalog API calls for product/SKU creation (e.g., `POST /api/catalog/pvt/product`, `POST /api/catalog/pvt/stockkeepingunit`) from a seller integration → warn that the SKU Integration API should be used instead.
+The seller does not own the catalog. Direct catalog writes will fail with 403 Forbidden or create orphaned entries that bypass the approval workflow. The suggestion mechanism ensures marketplace quality control.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see direct Catalog API calls for product/SKU creation (e.g., `POST /api/catalog/pvt/product`, `POST /api/catalog/pvt/stockkeepingunit`) from a seller integration → warn that the SKU Integration API should be used instead.
+
+**Correct**
+
 ```typescript
 import axios, { AxiosInstance } from "axios";
 
@@ -131,7 +114,8 @@ async function integrateSellerSku(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Seller trying to write directly to marketplace catalog
 // This bypasses the suggestion/approval flow and will fail with 403
@@ -153,13 +137,18 @@ async function createSkuDirectly(
 
 ### Constraint: Handle Rate Limiting on Catalog Notifications
 
-**Rule**: All catalog notification calls MUST implement 429 handling with exponential backoff. Batch notifications MUST be throttled to respect VTEX API rate limits.
+All catalog notification calls MUST implement 429 handling with exponential backoff. Batch notifications MUST be throttled to respect VTEX API rate limits.
 
-**Why**: The Change Notification endpoint is rate-limited. Sending bulk notifications without throttling will trigger 429 responses and temporarily block the seller's API access, stalling the entire integration.
+**Why this matters**
 
-**Detection**: If you see catalog notification calls without 429 handling or retry logic → STOP and add rate limiting. If you see a tight loop sending notifications without delays → warn about rate limiting.
+The Change Notification endpoint is rate-limited. Sending bulk notifications without throttling will trigger 429 responses and temporarily block the seller's API access, stalling the entire integration.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see catalog notification calls without 429 handling or retry logic → STOP and add rate limiting. If you see a tight loop sending notifications without delays → warn about rate limiting.
+
+**Correct**
+
 ```typescript
 async function batchNotifySkus(
   client: AxiosInstance,
@@ -224,7 +213,8 @@ async function batchNotifySkus(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: No rate limiting, no error handling, tight loop
 async function notifyAllSkus(
@@ -248,13 +238,18 @@ async function notifyAllSkus(
 
 ### Constraint: Handle Suggestion Lifecycle States
 
-**Rule**: Sellers MUST check the suggestion state before attempting updates. Suggestions can only be updated while in pending state.
+Sellers MUST check the suggestion state before attempting updates. Suggestions can only be updated while in pending state.
 
-**Why**: Attempting to update an already-approved or denied suggestion will fail silently or create duplicate entries. An approved suggestion becomes an SKU owned by the marketplace.
+**Why this matters**
 
-**Detection**: If you see SKU suggestion updates without checking current suggestion status → warn about suggestion lifecycle handling.
+Attempting to update an already-approved or denied suggestion will fail silently or create duplicate entries. An approved suggestion becomes an SKU owned by the marketplace.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see SKU suggestion updates without checking current suggestion status → warn about suggestion lifecycle handling.
+
+**Correct**
+
 ```typescript
 async function updateSkuSuggestion(
   client: AxiosInstance,
@@ -296,7 +291,8 @@ async function updateSkuSuggestion(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Blindly sending suggestion update without checking state
 async function blindUpdateSuggestion(
@@ -315,11 +311,9 @@ async function blindUpdateSuggestion(
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement SKU catalog integration.**
-
-### Step 1: Set Up the Seller Connector Client
+### Set Up the Seller Connector Client
 
 Create an authenticated HTTP client for communicating with the VTEX marketplace.
 
@@ -347,7 +341,7 @@ function createMarketplaceClient(config: SellerConnectorConfig): AxiosInstance {
 }
 ```
 
-### Step 2: Implement the Change Notification Flow
+### Implement the Change Notification Flow
 
 Handle both the "exists" (200) and "new" (404) scenarios from the changenotification endpoint.
 
@@ -390,7 +384,7 @@ async function notifyAndSync(
 }
 ```
 
-### Step 3: Implement the Fulfillment Simulation Endpoint
+### Implement the Fulfillment Simulation Endpoint
 
 The marketplace calls this endpoint on the seller's side to retrieve current price and inventory data after a notification.
 
@@ -469,7 +463,7 @@ async function getSkuFromLocalCatalog(skuId: string): Promise<{
 }
 ```
 
-### Step 4: Notify Price and Inventory Changes
+### Notify Price and Inventory Changes
 
 Send separate notifications for price and inventory updates.
 
@@ -583,54 +577,11 @@ async function getLocalSkusNeedingSync(): Promise<
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Polling for suggestion status in tight loops.** Suggestion approval is a manual or semi-automatic marketplace process that can take minutes to days. Tight polling wastes API quota and may trigger rate limits that block the entire integration. Use a scheduled job (cron) to check suggestion statuses periodically (e.g., every 15-30 minutes), or implement a webhook-based notification system.
 
-### Anti-Pattern: Polling for Suggestion Status in Tight Loops
-
-**What happens**: Developers send a suggestion then immediately poll for approval status in a tight loop, waiting for the marketplace to approve.
-
-**Why it fails**: Suggestion approval is a manual or semi-automatic marketplace process that can take minutes to days. Tight polling wastes API quota and may trigger rate limits that block the entire integration.
-
-**Fix**: Use a scheduled job (cron) to check suggestion statuses periodically (e.g., every 15-30 minutes), or implement a webhook-based notification system.
-
-```typescript
-// Correct: Scheduled periodic check, not a tight poll
-async function checkPendingSuggestions(
-  client: AxiosInstance,
-  sellerId: string,
-  pendingSkuIds: string[]
-): Promise<Array<{ skuId: string; status: string }>> {
-  const results: Array<{ skuId: string; status: string }> = [];
-
-  for (const skuId of pendingSkuIds) {
-    try {
-      const response = await client.get(
-        `/api/catalog_system/pvt/sku/seller/${sellerId}/suggestion/${skuId}`
-      );
-      results.push({ skuId, status: response.data.Status });
-    } catch {
-      results.push({ skuId, status: "not_found" });
-    }
-
-    // Respect rate limits between checks
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-
-  return results;
-}
-```
-
----
-
-### Anti-Pattern: Ignoring Fulfillment Simulation Timeout
-
-**What happens**: The seller's fulfillment simulation endpoint performs complex database queries or external API calls that exceed the response time limit.
-
-**Why it fails**: VTEX marketplaces wait a maximum of **2.5 seconds** for a fulfillment simulation response. After that, the product is considered unavailable/inactive and won't appear in the storefront or checkout.
-
-**Fix**: Pre-cache price and inventory data. Use in-memory or Redis cache with event-driven updates so the simulation endpoint responds instantly.
+- **Ignoring the fulfillment simulation timeout.** The seller's fulfillment simulation endpoint performs complex database queries or external API calls that exceed the response time limit. VTEX marketplaces wait a maximum of **2.5 seconds** for a fulfillment simulation response. After that, the product is considered unavailable/inactive and won't appear in the storefront or checkout. Pre-cache price and inventory data using in-memory or Redis cache with event-driven updates so the simulation endpoint responds instantly.
 
 ```typescript
 import { RequestHandler } from "express";
@@ -675,9 +626,17 @@ const fastFulfillmentSimulation: RequestHandler = async (req, res) => {
 };
 ```
 
-## Reference
+## Review checklist
 
-**Links to VTEX documentation and related resources.**
+- [ ] Is the Change Notification + SKU Suggestion flow used (not direct Catalog API writes)?
+- [ ] Does the integration handle both 200 (exists) and 404 (new) responses from changenotification?
+- [ ] Are SKU suggestion updates guarded by a status check (only update while "Pending")?
+- [ ] Are batch catalog notifications throttled with 429 handling and exponential backoff?
+- [ ] Does the fulfillment simulation endpoint respond within **2.5 seconds**?
+- [ ] Are price and inventory notifications sent via the correct `/notificator/` endpoints?
+- [ ] Are placeholder values (account names, seller IDs, API keys) replaced with real values?
+
+## Reference
 
 - [External Seller Connector Guide](https://developers.vtex.com/docs/guides/external-seller-integration-connector) — Complete integration flow for external sellers connecting to VTEX marketplaces
 - [Change Notification API](https://developers.vtex.com/docs/api-reference/catalog-api#post-/api/catalog_system/pvt/skuseller/changenotification/-skuId-) — API reference for the changenotification endpoint
@@ -690,61 +649,29 @@ const fastFulfillmentSimulation: RequestHandler = async (req, res) => {
 
 # Fulfillment, Invoice & Tracking
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The complete seller-side fulfillment flow for VTEX marketplace orders, including authorize fulfillment handling, invoice notification, tracking code updates, and partial invoicing for split shipments.
+Use this skill when building a seller integration that needs to send invoice data and tracking information to a VTEX marketplace after fulfilling an order.
 
-**When to use it**: When building a seller integration that needs to send invoice data and tracking information to a VTEX marketplace after fulfilling an order.
+- Handling the Authorize Fulfillment callback from the marketplace
+- Sending invoice notifications via `POST /api/oms/pvt/orders/{orderId}/invoice`
+- Updating tracking information via `PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}`
+- Implementing partial invoicing for split shipments
 
-**What you'll learn**:
-- How to handle the Authorize Fulfillment callback from the marketplace
-- How to send invoice notifications via `POST /api/oms/pvt/orders/{orderId}/invoice`
-- The required invoice payload fields and correct formatting
-- How to update tracking information and handle partial invoicing
+Do not use this skill for:
+- Catalog or SKU synchronization (see `marketplace-catalog-sync`)
+- Order event consumption via Feed/Hook (see `marketplace-order-hook`)
+- General API rate limiting (see `marketplace-rate-limiting`)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
-
-### Concept 1: Fulfillment Authorization Flow
-
-After payment is approved, the VTEX marketplace sends an **Authorize Fulfillment** request to the seller's endpoint (`POST /pvt/orders/{sellerOrderId}/fulfill`). This signals that the seller can begin the fulfillment process.
-
-The request body contains only the `marketplaceOrderId`. The seller must:
-1. Map the `marketplaceOrderId` to their internal order
-2. Begin picking, packing, and shipping
-3. Once ready, send the invoice notification back to the marketplace
-
-### Concept 2: Invoice Notification Endpoint
-
-The seller sends invoice data to the marketplace using:
-`POST /api/oms/pvt/orders/{orderId}/invoice`
-
-Required fields in the request body:
-- `type` — `"Output"` for sales invoices (shipment), `"Input"` for return invoices
-- `invoiceNumber` — Unique invoice identifier
-- `invoiceValue` — Total value in cents (e.g., 9990 = $99.90)
-- `issuanceDate` — ISO 8601 date string when the invoice was issued
-- `invoiceUrl` — URL to the invoice document (optional but recommended)
-- `invoiceKey` — NFe access key (required in Brazil, optional elsewhere)
-- `items` — Array of items with `id`, `quantity`, and `price`
-
-After receiving invoice information, the order status changes to **invoiced**. At this point, the order can no longer be canceled (unless a return invoice is sent first).
-
-### Concept 3: Tracking Updates
-
-Tracking information uses the **same invoice endpoint** but is sent separately:
-`POST /api/oms/pvt/orders/{orderId}/invoice`
-
-The tracking fields are:
-- `courier` — Carrier name
-- `trackingNumber` — Tracking identifier from the carrier
-- `trackingUrl` — URL for tracking the shipment
-
-For updating tracking on an existing invoice, use:
-`PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}`
-
-This endpoint is used to add the tracking number after the invoice has been sent, or to update delivery status with `isDelivered: true`.
+- After payment is approved, the VTEX marketplace sends an **Authorize Fulfillment** request to the seller's endpoint (`POST /pvt/orders/{sellerOrderId}/fulfill`). Only begin fulfillment after receiving this callback.
+- Send invoices via `POST /api/oms/pvt/orders/{orderId}/invoice`. Required fields: `type`, `invoiceNumber`, `invoiceValue` (in cents), `issuanceDate`, and `items` array.
+- Use `type: "Output"` for sales invoices (shipment) and `type: "Input"` for return invoices.
+- Send tracking information **separately** after the carrier provides it, using `PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}`. Do not hardcode placeholder tracking values in the initial invoice.
+- For split shipments, send **one invoice per package** with only the items in that package. Each `invoiceValue` must reflect only its items.
+- Once an order is invoiced, it cannot be canceled without first sending a return invoice (`type: "Input"`).
+- The fulfillment simulation endpoint must respond within **2.5 seconds** or the product is considered unavailable.
 
 **Architecture/Data Flow**:
 
@@ -764,19 +691,22 @@ VTEX Marketplace                    External Seller
        │    (status → delivered)           │
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Send Correct Invoice Format with All Required Fields
 
-**Rule**: The invoice notification MUST include `type`, `invoiceNumber`, `invoiceValue`, `issuanceDate`, and `items` array. The `invoiceValue` MUST be in cents. The `items` array MUST match the items in the order.
+The invoice notification MUST include `type`, `invoiceNumber`, `invoiceValue`, `issuanceDate`, and `items` array. The `invoiceValue` MUST be in cents. The `items` array MUST match the items in the order.
 
-**Why**: Missing required fields cause the API to reject the invoice with 400 Bad Request, leaving the order stuck in "handling" status. Incorrect `invoiceValue` (e.g., using dollars instead of cents) causes financial discrepancies in marketplace reconciliation.
+**Why this matters**
 
-**Detection**: If you see an invoice notification payload missing `invoiceNumber`, `invoiceValue`, `issuanceDate`, or `items` → warn about missing required fields. If `invoiceValue` appears to be in dollars (e.g., `99.90` instead of `9990`) → warn about cents conversion.
+Missing required fields cause the API to reject the invoice with 400 Bad Request, leaving the order stuck in "handling" status. Incorrect `invoiceValue` (e.g., using dollars instead of cents) causes financial discrepancies in marketplace reconciliation.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see an invoice notification payload missing `invoiceNumber`, `invoiceValue`, `issuanceDate`, or `items` → warn about missing required fields. If `invoiceValue` appears to be in dollars (e.g., `99.90` instead of `9990`) → warn about cents conversion.
+
+**Correct**
+
 ```typescript
 import axios, { AxiosInstance } from "axios";
 
@@ -846,7 +776,8 @@ async function invoiceOrder(client: AxiosInstance, orderId: string): Promise<voi
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Missing required fields, value in dollars instead of cents
 async function sendBrokenInvoice(
@@ -867,13 +798,18 @@ async function sendBrokenInvoice(
 
 ### Constraint: Update Tracking Promptly After Shipping
 
-**Rule**: Tracking information MUST be sent as soon as the carrier provides it. Use `PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}` to add tracking to an existing invoice.
+Tracking information MUST be sent as soon as the carrier provides it. Use `PATCH /api/oms/pvt/orders/{orderId}/invoice/{invoiceNumber}` to add tracking to an existing invoice.
 
-**Why**: Late tracking updates prevent customers from seeing shipment status in the marketplace. The order remains in "invoiced" state instead of progressing to "delivering" and then "delivered". This generates customer support tickets and damages seller reputation.
+**Why this matters**
 
-**Detection**: If you see tracking information being batched for daily updates instead of sent in real-time → warn about prompt tracking updates. If tracking is included in the initial invoice call but the carrier hasn't provided it yet (hardcoded/empty values) → warn.
+Late tracking updates prevent customers from seeing shipment status in the marketplace. The order remains in "invoiced" state instead of progressing to "delivering" and then "delivered". This generates customer support tickets and damages seller reputation.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see tracking information being batched for daily updates instead of sent in real-time → warn about prompt tracking updates. If tracking is included in the initial invoice call but the carrier hasn't provided it yet (hardcoded/empty values) → warn.
+
+**Correct**
+
 ```typescript
 interface TrackingUpdate {
   courier: string;
@@ -924,7 +860,8 @@ async function onDeliveryConfirmed(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Sending empty/fake tracking data with the invoice
 async function invoiceWithFakeTracking(
@@ -950,13 +887,18 @@ async function invoiceWithFakeTracking(
 
 ### Constraint: Handle Partial Invoicing for Split Shipments
 
-**Rule**: For orders shipped in multiple packages, each shipment MUST have its own invoice with only the items included in that package. The `invoiceValue` MUST reflect only the items in that particular shipment.
+For orders shipped in multiple packages, each shipment MUST have its own invoice with only the items included in that package. The `invoiceValue` MUST reflect only the items in that particular shipment.
 
-**Why**: Sending a single invoice for the full order value when only partial items are shipped causes financial discrepancies. The marketplace cannot reconcile payments correctly, and the order status may not progress properly.
+**Why this matters**
 
-**Detection**: If you see a single invoice being sent with the full order value for partial shipments → warn about partial invoicing. If the items array doesn't match the actual items being shipped → warn.
+Sending a single invoice for the full order value when only partial items are shipped causes financial discrepancies. The marketplace cannot reconcile payments correctly, and the order status may not progress properly.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see a single invoice being sent with the full order value for partial shipments → warn about partial invoicing. If the items array doesn't match the actual items being shipped → warn.
+
+**Correct**
+
 ```typescript
 interface OrderItem {
   id: string;
@@ -1019,7 +961,8 @@ await sendPartialInvoices(client, "ORD-123", [
 ]);
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Sending full order value for partial shipment
 async function wrongPartialInvoice(
@@ -1043,11 +986,9 @@ async function wrongPartialInvoice(
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement fulfillment, invoicing, and tracking.**
-
-### Step 1: Implement the Authorize Fulfillment Endpoint
+### Implement the Authorize Fulfillment Endpoint
 
 The marketplace calls this endpoint when payment is approved.
 
@@ -1107,7 +1048,7 @@ app.use(express.json());
 app.post("/pvt/orders/:sellerOrderId/fulfill", authorizeFulfillmentHandler);
 ```
 
-### Step 2: Send Invoice After Fulfillment
+### Send Invoice After Fulfillment
 
 Once the order is packed and the invoice is generated, send the invoice notification.
 
@@ -1160,7 +1101,7 @@ async function generateInvoice(order: OrderMapping): Promise<{
 }
 ```
 
-### Step 3: Send Tracking When Carrier Picks Up
+### Send Tracking When Carrier Picks Up
 
 ```typescript
 async function handleCarrierPickup(
@@ -1181,7 +1122,7 @@ async function handleCarrierPickup(
 }
 ```
 
-### Step 4: Confirm Delivery
+### Confirm Delivery
 
 ```typescript
 async function handleDeliveryConfirmation(
@@ -1276,43 +1217,11 @@ async function waitForDeliveryConfirmation(
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Sending invoice before fulfillment authorization.** The seller sends an invoice notification immediately when the order is placed, before receiving the Authorize Fulfillment callback from the marketplace. Payment may still be pending or under review. Invoicing before authorization can result in the invoice being rejected or the order being in an inconsistent state. Only send the invoice after receiving `POST /pvt/orders/{sellerOrderId}/fulfill`.
 
-### Anti-Pattern: Sending Invoice Before Fulfillment Authorization
-
-**What happens**: The seller sends an invoice notification immediately when the order is placed, before receiving the Authorize Fulfillment callback from the marketplace.
-
-**Why it fails**: The order hasn't been authorized for fulfillment yet — payment may still be pending or under review. Invoicing before authorization can result in the invoice being rejected or the order being in an inconsistent state.
-
-**Fix**: Only send the invoice after receiving the Authorize Fulfillment callback (`POST /pvt/orders/{sellerOrderId}/fulfill`).
-
-```typescript
-// Correct: Wait for fulfillment authorization before invoicing
-async function onFulfillmentAuthorized(
-  client: AxiosInstance,
-  sellerOrderId: string,
-  marketplaceOrderId: string
-): Promise<void> {
-  // Now it's safe to begin fulfillment and send invoice
-  const order = orderStore.get(sellerOrderId);
-  if (!order) return;
-
-  order.marketplaceOrderId = marketplaceOrderId;
-  await fulfillAndInvoice(client, order);
-}
-```
-
----
-
-### Anti-Pattern: Not Handling Return Invoices for Cancellation
-
-**What happens**: A seller tries to cancel an invoiced order by calling the Cancel Order endpoint directly without first sending a return invoice.
-
-**Why it fails**: Once an order is in "invoiced" status, it cannot be canceled without a return invoice (`type: "Input"`). The Cancel Order API will reject the request.
-
-**Fix**: Send a return invoice first, then request cancellation.
+- **Not handling return invoices for cancellation.** A seller tries to cancel an invoiced order by calling the Cancel Order endpoint directly without first sending a return invoice. Once an order is in "invoiced" status, it cannot be canceled without a return invoice (`type: "Input"`). The Cancel Order API will reject the request.
 
 ```typescript
 // Correct: Send return invoice before canceling an invoiced order
@@ -1339,9 +1248,19 @@ async function cancelInvoicedOrder(
 }
 ```
 
-## Reference
+- **Fulfillment simulation exceeding the 2.5-second timeout.** The seller's fulfillment simulation endpoint performs complex database queries or external API calls that exceed the response time limit. VTEX marketplaces wait a maximum of **2.5 seconds** for a fulfillment simulation response. After that, the product is considered unavailable/inactive and won't appear in the storefront or checkout. Pre-cache price and inventory data.
 
-**Links to VTEX documentation and related resources.**
+## Review checklist
+
+- [ ] Does the seller only begin fulfillment after receiving the Authorize Fulfillment callback?
+- [ ] Does the invoice payload include all required fields (`type`, `invoiceNumber`, `invoiceValue`, `issuanceDate`, `items`)?
+- [ ] Is `invoiceValue` in cents (not dollars)?
+- [ ] Is tracking sent separately after the carrier provides real data (not hardcoded placeholders)?
+- [ ] For split shipments, does each invoice cover only its package's items and value?
+- [ ] Is cancellation of invoiced orders handled via return invoice (`type: "Input"`) first?
+- [ ] Does the fulfillment simulation endpoint respond within **2.5 seconds**?
+
+## Reference
 
 - [External Seller Connector - Order Invoicing](https://developers.vtex.com/docs/guides/external-seller-integration-connector#order-invoicing) — Seller-side invoicing flow in the integration guide
 - [Order Invoice Notification API](https://developers.vtex.com/docs/api-reference/orders-api#post-/api/oms/pvt/orders/-orderId-/invoice) — API reference for sending invoice data
@@ -1354,30 +1273,30 @@ async function cancelInvoicedOrder(
 
 # Order Integration & Webhooks
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: VTEX order Feed v3 and Hook configuration for marketplace integrations, including webhook setup, order status lifecycle, payload structure, authentication validation, and idempotent event processing.
+Use this skill when building an integration that needs to react to order status changes in a VTEX marketplace — such as syncing orders to an ERP, triggering fulfillment workflows, or sending notifications to external systems.
 
-**When to use it**: When building an integration that needs to react to order status changes in a VTEX marketplace — such as syncing orders to an ERP, triggering fulfillment workflows, or sending notifications to external systems.
+- Configuring Feed v3 or Hook for order updates
+- Choosing between Feed (pull) and Hook (push) delivery models
+- Validating webhook authentication and processing events idempotently
+- Handling the complete order status lifecycle
 
-**What you'll learn**:
-- How to configure Feed v3 and Hook for order updates
-- The difference between Feed (pull) and Hook (push) and when to use each
-- How to validate webhook authentication and process events idempotently
-- How to handle the complete order status lifecycle
+Do not use this skill for:
+- Catalog or SKU synchronization (see `marketplace-catalog-sync`)
+- Invoice and tracking submission (see `marketplace-fulfillment`)
+- General API rate limiting (see `marketplace-rate-limiting`)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Use **Hook (push)** for high-performance middleware that needs real-time order updates. Your endpoint must respond with HTTP 200 within 5000ms.
+- Use **Feed (pull)** for ERPs or systems with limited throughput where you control the consumption pace. Events persist in a queue until committed.
+- Use **Feed as a backup** alongside Hook to catch events missed during downtime.
+- Use **FromWorkflow** filter when you only need to react to order status changes (simpler, most common).
+- Use **FromOrders** filter when you need to filter by any order property using JSONata expressions (e.g., by sales channel).
+- The two filter types are **mutually exclusive**. Using both in the same configuration request returns `409 Conflict`.
+- Each appKey can configure only one feed and one hook. Different users sharing the same appKey access the same feed/hook.
 
-### Concept 1: Feed vs. Hook
-
-VTEX provides two mechanisms for consuming order updates:
-
-- **Feed (pull model)**: A queue of order update events. Your integration periodically calls `GET /api/orders/feed` to retrieve events, processes them, then commits them via `POST /api/orders/feed`. You control the pace.
-- **Hook (push model)**: VTEX sends order update events to your endpoint via POST whenever an event matches your filter. Your endpoint must respond with HTTP 200 within 5000ms.
-
-Key differences:
 | | Feed | Hook |
 |---|---|---|
 | Model | Pull (active) | Push (reactive) |
@@ -1385,38 +1304,7 @@ Key differences:
 | Reliability | Events persist in queue | Must be always available |
 | Best for | ERPs with limited throughput | High-performance middleware |
 
-Each appKey can configure only one feed and one hook. Different users sharing the same appKey access the same feed/hook.
-
-### Concept 2: Filter Types
-
-Both Feed and Hook support two filter types:
-
-**FromWorkflow** — Filter by order status changes only:
-```json
-{
-  "filter": {
-    "type": "FromWorkflow",
-    "status": ["ready-for-handling", "handling", "invoiced", "cancel"]
-  }
-}
-```
-
-**FromOrders** — Filter by any order property using JSONata expressions:
-```json
-{
-  "filter": {
-    "type": "FromOrders",
-    "expression": "status = \"ready-for-handling\" and salesChannel = \"2\"",
-    "disableSingleFire": false
-  }
-}
-```
-
-The two filter types are mutually exclusive. Using both in the same configuration request returns `409 Conflict`.
-
-### Concept 3: Hook Notification Payload
-
-When a Hook fires, VTEX sends a POST to your endpoint with this structure:
+**Hook Notification Payload**:
 
 ```json
 {
@@ -1447,19 +1335,22 @@ VTEX OMS                           Your Integration
    │◀── HTTP 200 ─────────────────────────│  (Must respond within 5000ms)
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Validate Webhook Authentication
 
-**Rule**: Your hook endpoint MUST validate the authentication headers sent by VTEX before processing any event. The `Origin.Account` and `Origin.Key` fields in the payload must match your expected values.
+Your hook endpoint MUST validate the authentication headers sent by VTEX before processing any event. The `Origin.Account` and `Origin.Key` fields in the payload must match your expected values.
 
-**Why**: Without auth validation, any actor can send fake order events to your endpoint, triggering unauthorized fulfillment actions, data corruption, or financial losses.
+**Why this matters**
 
-**Detection**: If you see a hook endpoint handler that processes events without checking `Origin.Account`, `Origin.Key`, or custom headers → STOP and add authentication validation.
+Without auth validation, any actor can send fake order events to your endpoint, triggering unauthorized fulfillment actions, data corruption, or financial losses.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see a hook endpoint handler that processes events without checking `Origin.Account`, `Origin.Key`, or custom headers → STOP and add authentication validation.
+
+**Correct**
+
 ```typescript
 import { RequestHandler } from "express";
 
@@ -1522,7 +1413,8 @@ async function processOrderEvent(payload: HookPayload): Promise<void> {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: No authentication validation — accepts events from anyone
 const unsafeHookHandler: RequestHandler = async (req, res) => {
@@ -1539,13 +1431,18 @@ const unsafeHookHandler: RequestHandler = async (req, res) => {
 
 ### Constraint: Process Events Idempotently
 
-**Rule**: Your integration MUST process order events idempotently. Use the combination of `OrderId` + `State` + `LastChange` as a deduplication key to prevent duplicate processing.
+Your integration MUST process order events idempotently. Use the combination of `OrderId` + `State` + `LastChange` as a deduplication key to prevent duplicate processing.
 
-**Why**: VTEX may deliver the same hook notification multiple times (at-least-once delivery). Without idempotency, duplicate processing can result in double fulfillment, duplicate invoices, or inconsistent state.
+**Why this matters**
 
-**Detection**: If you see an order event handler without an `orderId` duplicate check or deduplication mechanism → warn about idempotency. If the handler directly mutates state without checking if the event was already processed → warn.
+VTEX may deliver the same hook notification multiple times (at-least-once delivery). Without idempotency, duplicate processing can result in double fulfillment, duplicate invoices, or inconsistent state.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see an order event handler without an `orderId` duplicate check or deduplication mechanism → warn about idempotency. If the handler directly mutates state without checking if the event was already processed → warn.
+
+**Correct**
+
 ```typescript
 interface ProcessedEvent {
   orderId: string;
@@ -1624,7 +1521,8 @@ async function cancelOrderInERP(orderId: string): Promise<void> {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: No deduplication — processes every event even if already handled
 async function processWithoutIdempotency(payload: HookPayload): Promise<void> {
@@ -1654,13 +1552,18 @@ const database = {
 
 ### Constraint: Handle All Order Statuses
 
-**Rule**: Your integration MUST handle all possible order statuses, including `Status Null`. Unrecognized statuses must be logged but not crash the integration.
+Your integration MUST handle all possible order statuses, including `Status Null`. Unrecognized statuses must be logged but not crash the integration.
 
-**Why**: VTEX documents warn that `Status Null` may be unidentified and end up being mapped as another status, potentially leading to errors. Missing a status in your handler can cause orders to get stuck or lost.
+**Why this matters**
 
-**Detection**: If you see a status handler that only covers 2-3 statuses without a default/fallback case → warn about incomplete status handling.
+VTEX documents warn that `Status Null` may be unidentified and end up being mapped as another status, potentially leading to errors. Missing a status in your handler can cause orders to get stuck or lost.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see a status handler that only covers 2-3 statuses without a default/fallback case → warn about incomplete status handling.
+
+**Correct**
+
 ```typescript
 type OrderStatus =
   | "order-created"
@@ -1746,7 +1649,8 @@ async function logUnhandledStatus(orderId: string, state: string): Promise<void>
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Only handles 2 statuses, no fallback for unknown statuses
 async function incompleteHandler(orderId: string, state: string): Promise<void> {
@@ -1761,11 +1665,9 @@ async function incompleteHandler(orderId: string, state: string): Promise<void> 
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement order integration.**
-
-### Step 1: Configure the Hook
+### Configure the Hook
 
 Set up the hook with appropriate filters and your endpoint URL.
 
@@ -1827,7 +1729,7 @@ await configureOrderHook({
 });
 ```
 
-### Step 2: Build the Hook Endpoint with Auth and Idempotency
+### Build the Hook Endpoint with Auth and Idempotency
 
 ```typescript
 import express from "express";
@@ -1845,10 +1747,10 @@ const hookConfig: HookConfig = {
 app.post("/vtex/order-hook", createHookHandler(hookConfig));
 
 // The createHookHandler and idempotentProcessEvent functions
-// from the Constraints section above handle auth + deduplication
+// from the Hard constraints section above handle auth + deduplication
 ```
 
-### Step 3: Fetch Full Order Data and Process
+### Fetch Full Order Data and Process
 
 After receiving the hook notification, fetch the complete order data for processing.
 
@@ -1935,7 +1837,7 @@ async function cancelFulfillmentTask(orderId: string): Promise<void> {
 }
 ```
 
-### Step 4: Implement Feed as Fallback
+### Implement Feed as Fallback
 
 Use Feed v3 as a backup to catch any events the hook might miss during downtime.
 
@@ -2053,51 +1955,11 @@ app.listen(3000, () => {
 });
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Using List Orders API instead of Feed/Hook.** The `GET /api/oms/pvt/orders` endpoint depends on indexing, which can lag behind real-time updates. It's slower, less reliable, and more likely to hit rate limits when polled frequently. Feed v3 runs before indexing and doesn't depend on it. Use Feed v3 or Hook for order change detection; use List Orders only for ad-hoc queries.
 
-### Anti-Pattern: Using List Orders API Instead of Feed/Hook
-
-**What happens**: Developers poll `GET /api/oms/pvt/orders` with status filters to detect order changes instead of using Feed v3 or Hook.
-
-**Why it fails**: The List Orders API depends on indexing, which can lag behind real-time updates. It's slower, less reliable, and more likely to hit rate limits when polled frequently. Feed v3 runs before indexing and doesn't depend on it.
-
-**Fix**: Migrate to Feed v3 or Hook for order change detection. Use List Orders only for ad-hoc queries.
-
-```typescript
-// Correct: Use Feed v3 to consume order updates
-async function consumeOrderFeed(client: AxiosInstance): Promise<void> {
-  const response = await client.get("/api/orders/feed");
-  const events = response.data;
-
-  for (const event of events) {
-    await processOrderEvent({
-      Domain: "Marketplace",
-      OrderId: event.orderId,
-      State: event.state,
-      LastChange: event.lastChange,
-      Origin: { Account: "", Key: "" },
-    });
-  }
-
-  // Commit processed events
-  const handles = events.map((e: { handle: string }) => e.handle);
-  if (handles.length > 0) {
-    await client.post("/api/orders/feed", { handles });
-  }
-}
-```
-
----
-
-### Anti-Pattern: Blocking Hook Response with Long Processing
-
-**What happens**: The hook endpoint performs all order processing synchronously before responding to VTEX.
-
-**Why it fails**: VTEX requires the hook endpoint to respond with HTTP 200 within **5000ms**. If processing takes longer (e.g., ERP sync, complex database writes), VTEX considers the delivery failed and retries with increasing delays. Repeated failures can lead to hook deactivation.
-
-**Fix**: Acknowledge the event immediately, then process asynchronously via a queue.
+- **Blocking hook response with long processing.** VTEX requires the hook endpoint to respond with HTTP 200 within **5000ms**. If processing takes longer (e.g., ERP sync, complex database writes), VTEX considers the delivery failed and retries with increasing delays. Repeated failures can lead to hook deactivation. Acknowledge the event immediately, then process asynchronously via a queue.
 
 ```typescript
 import { RequestHandler } from "express";
@@ -2135,9 +1997,17 @@ async function enqueueOrderEvent(payload: HookPayload): Promise<void> {
 }
 ```
 
-## Reference
+## Review checklist
 
-**Links to VTEX documentation and related resources.**
+- [ ] Is the correct delivery model chosen (Feed for controlled throughput, Hook for real-time)?
+- [ ] Does the hook endpoint validate `Origin.Account`, `Origin.Key`, and custom headers?
+- [ ] Is event processing idempotent using `OrderId` + `State` + `LastChange` as deduplication key?
+- [ ] Does the status handler cover all order statuses with a default/fallback case?
+- [ ] Does the hook endpoint respond within **5000ms** (using async processing for heavy work)?
+- [ ] Is Feed v3 configured as a backup to catch missed hook events?
+- [ ] Are filter types not mixed (FromWorkflow and FromOrders are mutually exclusive)?
+
+## Reference
 
 - [Feed v3 Guide](https://developers.vtex.com/docs/guides/orders-feed) — Complete guide to Feed and Hook configuration, filter types, and best practices
 - [Orders API - Feed v3 Endpoints](https://developers.vtex.com/docs/api-reference/orders-api#get-/api/orders/feed) — API reference for feed retrieval and commit
@@ -2150,57 +2020,40 @@ async function enqueueOrderEvent(payload: HookPayload): Promise<void> {
 
 # API Rate Limiting & Resilience
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: VTEX API rate limiting mechanics, response headers for rate limit awareness, and resilience patterns including exponential backoff with jitter, circuit breakers, and request queuing for marketplace integrations.
+Use this skill when building any integration that calls VTEX APIs — catalog sync, order processing, price/inventory updates, or fulfillment operations — and needs to handle rate limits gracefully without losing data or degrading performance.
 
-**When to use it**: When building any integration that calls VTEX APIs — catalog sync, order processing, price/inventory updates, or fulfillment operations — and needs to handle rate limits gracefully without losing data or degrading performance.
+- Implementing retry logic with exponential backoff and jitter
+- Reading and reacting to VTEX rate limit headers (`Retry-After`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`)
+- Building circuit breakers for high-throughput integrations
+- Controlling request throughput with queuing
 
-**What you'll learn**:
-- How VTEX rate limits work, including burst credits and per-route limits
-- How to read and react to rate limit headers (`Retry-After`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`)
-- How to implement exponential backoff with jitter to avoid thundering herd problems
-- How to build circuit breakers and request queues for high-throughput integrations
+Do not use this skill for:
+- Catalog-specific synchronization logic (see `marketplace-catalog-sync`)
+- Order event consumption and processing (see `marketplace-order-hook`)
+- Invoice and tracking submission (see `marketplace-fulfillment`)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Always implement **exponential backoff with jitter** on 429 responses. Formula: `delay = min(maxDelay, baseDelay * 2^attempt) * (0.5 + random(0, 0.5))`.
+- Always **read the `Retry-After` header** on 429 responses. Use the greater of the `Retry-After` value and the calculated backoff delay.
+- Use a **circuit breaker** when a service consistently fails (e.g., after 5 consecutive failures), to prevent cascading failures and give the service time to recover.
+- Use a **request queue** to control throughput and avoid bursts that trigger rate limits.
+- Monitor `X-RateLimit-Remaining` **proactively** on successful responses and slow down before hitting 429.
+- VTEX rate limits vary by API:
+  - **Pricing API**: PUT/POST: 40 requests/second/account with 1000 burst credits. DELETE: 16 requests/second/account with 300 burst credits.
+  - **Catalog API**: Varies by endpoint; no published fixed limits.
+  - **Orders API**: Subject to general platform limits; VTEX recommends 1-minute backoff on 429.
+- **Burst Credits**: When you exceed the rate limit, excess requests consume burst credits (1 credit per excess request). When burst credits reach 0, the request is blocked with 429. Credits refill over time at the same rate as the route's limit when the route is not being used.
 
-### Concept 1: VTEX Rate Limit Mechanics
-
-VTEX enforces rate limits per route per account. When limits are exceeded:
-- **429 Too Many Requests** — Your request was rejected. The response includes a `Retry-After` header (in seconds) indicating when to retry.
-- **503 Service Unavailable** — A circuit breaker was activated because the target service received too many errors. Requests are temporarily blocked to let the service recover.
-
-Rate limits vary by API:
-- **Pricing API**: PUT/POST routes: 40 requests/second/account with 1000 burst credits. DELETE: 16 requests/second/account with 300 burst credits.
-- **Catalog API**: Varies by endpoint; no published fixed limits.
-- **Orders API**: Subject to general platform limits; VTEX recommends 1-minute backoff on 429.
-
-**Burst Credits**: When you exceed the rate limit, excess requests consume burst credits (1 credit per excess request). When burst credits reach 0, the request is blocked with 429. Credits refill over time at the same rate as the route's limit when the route is not being used.
-
-### Concept 2: Rate Limit Response Headers
-
-VTEX APIs return these headers to help your integration manage request rates:
+**Rate Limit Response Headers**:
 
 | Header | Description |
 |---|---|
 | `Retry-After` | Seconds to wait before retrying (present on 429 responses) |
 | `X-RateLimit-Remaining` | Number of requests remaining in the current window |
 | `X-RateLimit-Reset` | Timestamp (seconds) when the rate limit window resets |
-
-Always read `Retry-After` on 429 responses. Using a fixed retry interval instead ignores the server's guidance and may cause prolonged blocking.
-
-### Concept 3: Exponential Backoff with Jitter
-
-Exponential backoff increases the wait time between retries exponentially (e.g., 1s, 2s, 4s, 8s). **Jitter** adds randomness to prevent the "thundering herd" problem where many clients retry at the same time after a rate limit window resets.
-
-The formula: `delay = min(maxDelay, baseDelay * 2^attempt) * (0.5 + random(0, 0.5))`
-
-This ensures:
-- Failed requests are retried with increasing delays
-- Multiple clients don't retry simultaneously
-- The delay is bounded by a maximum to prevent excessively long waits
 
 **Architecture/Data Flow**:
 
@@ -2220,19 +2073,22 @@ Your Integration                          VTEX API
       │◀── 200 OK ─────────────────────────│  (success)
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Implement Exponential Backoff on 429 Responses
 
-**Rule**: When receiving a 429 response, the integration MUST wait before retrying using exponential backoff with jitter. The wait time MUST respect the `Retry-After` header when present.
+When receiving a 429 response, the integration MUST wait before retrying using exponential backoff with jitter. The wait time MUST respect the `Retry-After` header when present.
 
-**Why**: Immediate retries after a 429 will be rejected again and consume burst credits faster, leading to prolonged blocking. Without jitter, all clients retry simultaneously after the window resets, causing another rate limit spike (thundering herd).
+**Why this matters**
 
-**Detection**: If you see immediate retry on 429 (no delay, no backoff) → STOP and implement exponential backoff. If you see retry logic without reading the `Retry-After` header → warn that the header should be respected. If you see `while(true)` retry loops or `setInterval` with intervals less than 5 seconds → warn about tight loops.
+Immediate retries after a 429 will be rejected again and consume burst credits faster, leading to prolonged blocking. Without jitter, all clients retry simultaneously after the window resets, causing another rate limit spike (thundering herd).
 
-✅ **CORRECT**:
+**Detection**
+
+If you see immediate retry on 429 (no delay, no backoff) → STOP and implement exponential backoff. If you see retry logic without reading the `Retry-After` header → warn that the header should be respected. If you see `while(true)` retry loops or `setInterval` with intervals less than 5 seconds → warn about tight loops.
+
+**Correct**
+
 ```typescript
 import axios, { AxiosInstance, AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 
@@ -2327,7 +2183,8 @@ async function requestWithRetry<T>(
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Immediate retry without backoff or Retry-After respect
 async function retryImmediately<T>(
@@ -2354,13 +2211,18 @@ async function retryImmediately<T>(
 
 ### Constraint: Respect the Retry-After Header
 
-**Rule**: When a 429 response includes a `Retry-After` header, the integration MUST wait at least the specified number of seconds before retrying. The backoff delay should be the maximum of the calculated backoff and the `Retry-After` value.
+When a 429 response includes a `Retry-After` header, the integration MUST wait at least the specified number of seconds before retrying. The backoff delay should be the maximum of the calculated backoff and the `Retry-After` value.
 
-**Why**: The `Retry-After` header is the server's explicit instruction on when it will accept requests again. Ignoring it results in requests being rejected until the specified time has passed, wasting bandwidth and potentially extending the block period.
+**Why this matters**
 
-**Detection**: If you see retry logic that does not read or use the `Retry-After` header value → warn that the header should be checked. If the retry delay is always a fixed value regardless of the header → warn.
+The `Retry-After` header is the server's explicit instruction on when it will accept requests again. Ignoring it results in requests being rejected until the specified time has passed, wasting bandwidth and potentially extending the block period.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see retry logic that does not read or use the `Retry-After` header value → warn that the header should be checked. If the retry delay is always a fixed value regardless of the header → warn.
+
+**Correct**
+
 ```typescript
 function getRetryDelayMs(error: AxiosError, attempt: number): number {
   const retryAfterHeader = error.response?.headers?.["retry-after"];
@@ -2386,7 +2248,8 @@ function getRetryDelayMs(error: AxiosError, attempt: number): number {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Fixed 1-second retry ignoring Retry-After header
 async function fixedRetry<T>(
@@ -2410,13 +2273,18 @@ async function fixedRetry<T>(
 
 ### Constraint: No Tight Retry Loops
 
-**Rule**: Integrations MUST NOT use `while(true)` loops for retrying or `setInterval`/`setTimeout` with intervals less than 5 seconds for polling VTEX APIs.
+Integrations MUST NOT use `while(true)` loops for retrying or `setInterval`/`setTimeout` with intervals less than 5 seconds for polling VTEX APIs.
 
-**Why**: Tight loops generate excessive requests that quickly exhaust rate limits, degrade VTEX platform performance for all users, and can make the VTEX Admin unavailable for the account. VTEX explicitly warns that excessive 429 errors can make Admin unavailable.
+**Why this matters**
 
-**Detection**: If you see `while(true)` or `for(;;)` retry patterns without adequate delays → warn about tight loops. If you see `setInterval` with intervals less than 5000ms for API calls → warn about polling frequency.
+Tight loops generate excessive requests that quickly exhaust rate limits, degrade VTEX platform performance for all users, and can make the VTEX Admin unavailable for the account. VTEX explicitly warns that excessive 429 errors can make Admin unavailable.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `while(true)` or `for(;;)` retry patterns without adequate delays → warn about tight loops. If you see `setInterval` with intervals less than 5000ms for API calls → warn about polling frequency.
+
+**Correct**
+
 ```typescript
 // Correct: Controlled polling with adequate intervals
 async function pollWithBackpressure(
@@ -2465,7 +2333,8 @@ async function commitEvents(client: AxiosInstance, handles: string[]): Promise<v
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // WRONG: Tight loop with no backpressure
 async function tightLoop(client: AxiosInstance): Promise<void> {
@@ -2492,11 +2361,9 @@ function createClient(): AxiosInstance {
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement rate-limit-aware VTEX API calls.**
-
-### Step 1: Create a Rate-Limit-Aware HTTP Client
+### Create a Rate-Limit-Aware HTTP Client
 
 Wrap your HTTP client with automatic retry logic.
 
@@ -2540,7 +2407,7 @@ function createRateLimitedClient(config: RateLimitedClientConfig): {
 }
 ```
 
-### Step 2: Implement a Circuit Breaker
+### Implement a Circuit Breaker
 
 Prevent cascading failures when a service is consistently failing.
 
@@ -2616,7 +2483,7 @@ class CircuitBreaker {
 }
 ```
 
-### Step 3: Implement a Request Queue
+### Implement a Request Queue
 
 Queue requests to control throughput and avoid bursts.
 
@@ -2692,7 +2559,7 @@ class RequestQueue {
 }
 ```
 
-### Step 4: Monitor Rate Limit Headers Proactively
+### Monitor Rate Limit Headers Proactively
 
 Read rate limit headers to slow down before hitting 429.
 
@@ -2791,17 +2658,9 @@ async function buildResilientIntegration(): Promise<void> {
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Fixed Retry Delay Without Jitter
-
-**What happens**: Developers implement retry logic with a fixed delay (e.g., always wait 5 seconds) instead of exponential backoff with jitter.
-
-**Why it fails**: When multiple integration instances are rate-limited simultaneously, they all retry at the same time (5 seconds later), creating another burst that triggers rate limiting again. This "thundering herd" pattern can persist indefinitely.
-
-**Fix**: Use exponential backoff with random jitter so retries are spread across time.
+- **Fixed retry delay without jitter.** Using a fixed delay (e.g., always 5 seconds) instead of exponential backoff with jitter causes the "thundering herd" problem: all rate-limited clients retry simultaneously, creating another burst that triggers rate limiting again. Use exponential backoff with random jitter so retries are spread across time.
 
 ```typescript
 // Correct: Exponential backoff with jitter
@@ -2821,15 +2680,7 @@ function getRetryDelay(attempt: number): number {
 // attempt 4: ~8000-16000ms
 ```
 
----
-
-### Anti-Pattern: No Proactive Rate Management
-
-**What happens**: Developers only handle 429 errors reactively (after being rate limited) instead of monitoring rate limit headers to slow down proactively.
-
-**Why it fails**: By the time you receive a 429, you've already lost burst credits. Proactive monitoring of `X-RateLimit-Remaining` allows you to reduce request rate before hitting the limit, maintaining consistent throughput.
-
-**Fix**: Read rate limit headers on successful responses and adjust request pacing when remaining quota is low.
+- **No proactive rate management.** Only handling 429 errors reactively (after being rate limited) instead of monitoring rate limit headers to slow down proactively. By the time you receive a 429, you've already lost burst credits. Monitor `X-RateLimit-Remaining` on successful responses and reduce request rate when remaining quota is low.
 
 ```typescript
 // Correct: Proactive rate management
@@ -2859,9 +2710,17 @@ async function proactiveRateManagement(
 }
 ```
 
-## Reference
+## Review checklist
 
-**Links to VTEX documentation and related resources.**
+- [ ] Is exponential backoff with jitter implemented for 429 responses?
+- [ ] Is the `Retry-After` header read and respected on 429 responses?
+- [ ] Are there no tight retry loops (`while(true)`, `setInterval` < 5 seconds)?
+- [ ] Is a circuit breaker in place for consistently failing services?
+- [ ] Are `X-RateLimit-Remaining` headers monitored proactively to slow down before hitting limits?
+- [ ] Are the correct numeric thresholds used (maxRetries: 5, baseDelayMs: 1000, maxDelayMs: 60000)?
+- [ ] Are Pricing API limits respected (40 req/s PUT/POST, 16 req/s DELETE, burst credits)?
+
+## Reference
 
 - [Best Practices for Avoiding Rate Limit Errors](https://developers.vtex.com/docs/guides/best-practices-for-avoiding-rate-limit-errors) — Official VTEX guide on rate limit management and best practices
 - [Handling Errors and Exceptions](https://developers.vtex.com/docs/guides/handling-errors-and-exceptions) — VTEX guide on error handling including 429 and 5xx responses

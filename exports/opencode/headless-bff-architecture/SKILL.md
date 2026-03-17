@@ -1,89 +1,49 @@
 ---
 name: headless-bff-architecture
-description: Apply when designing or modifying a BFF (Backend-for-Frontend) layer, middleware, or API proxy for a headless VTEX storefront. Covers BFF middleware architecture, public vs private API classification, VtexIdclientAutCookie management, API key protection, and secure request proxying. Use for any headless commerce project that must never expose VTEX_APP_KEY or call private VTEX APIs from the browser.
+description: "Apply when designing or modifying a BFF (Backend-for-Frontend) layer, middleware, or API proxy for a headless VTEX storefront. Covers BFF middleware architecture, public vs private API classification, VtexIdclientAutCookie management, API key protection, and secure request proxying. Use for any headless commerce project that must never expose VTEX_APP_KEY or call private VTEX APIs from the browser."
 ---
 
 # BFF Layer Design & Security
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The Backend-for-Frontend (BFF) architecture pattern for headless VTEX storefronts, including secure API proxying, credential management, and the critical separation between public and private VTEX APIs.
+Use this skill when building or modifying any headless VTEX storefront that communicates with VTEX APIs — whether a custom storefront, mobile app, or kiosk.
 
-**When to use it**: When building any headless frontend that communicates with VTEX APIs — whether a custom storefront, mobile app, or kiosk. Every headless project needs a BFF layer to protect API credentials and manage authentication tokens server-side.
+- Setting up a BFF (Backend-for-Frontend) layer for a new headless project
+- Deciding which VTEX APIs need server-side proxying vs direct frontend calls
+- Implementing credential management (`VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `VtexIdclientAutCookie`)
+- Reviewing a headless architecture for security compliance
 
-**What you'll learn**:
-- Why a BFF layer is mandatory for headless VTEX (not optional)
-- How to classify VTEX APIs as public vs private and route them accordingly
-- How to manage `VtexIdclientAutCookie` server-side and proxy authenticated requests
-- How to protect `VTEX_APP_KEY` and `VTEX_APP_TOKEN` from client-side exposure
+Do not use this skill for:
+- Checkout-specific proxy logic and OrderForm management (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
+- Search API integration details (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
+- Caching and TTL strategy (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- A BFF layer is **mandatory** for every headless VTEX project. There is no scenario where a headless storefront can safely operate without one.
+- Route all VTEX API calls through the BFF **except** Intelligent Search, which is the only API safe to call directly from the frontend.
+- Use `VtexIdclientAutCookie` (stored server-side) for shopper-scoped API calls. Use `X-VTEX-API-AppKey`/`X-VTEX-API-AppToken` for machine-to-machine calls.
+- Classify APIs by their path: `/pub/` endpoints are public but most still need BFF proxying for session management; `/pvt/` endpoints are private and **must** go through BFF.
+- Even public Checkout endpoints (`/api/checkout/pub/`) must be proxied through BFF for security — they handle sensitive personal data.
+- Create separate API keys with minimal permissions for different BFF modules rather than sharing one key with broad access.
 
-### Concept 1: Public vs Private VTEX APIs
+## Hard constraints
 
-VTEX APIs fall into two categories based on their authentication requirements:
+### Constraint: A BFF layer is mandatory for headless VTEX — no exceptions
 
-- **Public APIs** (`/pub/` in the path): Can be called without API keys. Examples include Intelligent Search (`/api/io/_v/api/intelligent-search/`), Catalog public endpoints (`/api/catalog_system/pub/`), and Checkout public endpoints (`/api/checkout/pub/`). However, even public Checkout endpoints should still be proxied through BFF for security.
-- **Private APIs** (`/pvt/` in the path): Require `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers. Examples include OMS (`/api/oms/pvt/`), Profile System (`/api/profile-system/pvt/`), and Pricing (`/api/pricing/pvt/`). These must NEVER be called from client-side code.
+Every headless VTEX storefront MUST have a server-side BFF layer. Client-side code MUST NOT make direct HTTP requests to private VTEX API endpoints. All private API calls must be routed through the BFF.
 
-The only API safe to call directly from the frontend is Intelligent Search, because it is fully public and designed for client-side use.
+**Why this matters**
 
-### Concept 2: VtexIdclientAutCookie
+Private VTEX APIs require `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers. If the frontend calls these APIs directly, the credentials must be embedded in client-side code or transmitted to the browser, exposing them to any user who opens browser DevTools. Stolen API keys can be used to access order data, modify pricing, or perform destructive administrative actions.
 
-When a shopper logs in to a VTEX store, the platform issues a JWT token set as a cookie named `VtexIdclientAutCookie`. This token:
+**Detection**
 
-- Is valid for 24 hours after creation
-- Authenticates requests on behalf of the shopper
-- Has scoped permissions (shoppers can only perform shopping-related actions)
-- Must be stored and managed server-side in headless implementations
-- Can be refreshed using the VTEX ID refresh token flow
+If you see `fetch` or `axios` calls to `vtexcommercestable.com.br/api/checkout`, `/api/oms`, `/api/profile`, or any `/pvt/` endpoint in client-side code (files under `src/`, `public/`, `app/`, or any browser-executed bundle) → STOP immediately. These calls must be moved to the BFF.
 
-In headless stores, the BFF layer intercepts the login callback, extracts the `VtexIdclientAutCookie`, stores it in a secure server-side session, and uses it to authenticate subsequent API calls on behalf of the shopper.
+**Correct**
 
-### Concept 3: Machine Authentication (API Keys)
-
-For server-to-server communication where no shopper context is needed, VTEX uses application keys:
-
-- `X-VTEX-API-AppKey`: The public identifier for the credential pair
-- `X-VTEX-API-AppToken`: The secret token associated with the key
-
-These credentials are configured in License Manager with specific roles and permissions. They must only exist in server-side environment variables and never be transmitted to or accessible from client-side code.
-
-**Architecture/Data Flow**:
-
-```text
-Frontend (Browser/App)
-    │
-    ├── Direct call (OK): Intelligent Search API (public, read-only)
-    │
-    └── All other requests → BFF Layer (Node.js/Express)
-                                │
-                                ├── Injects VtexIdclientAutCookie from session
-                                ├── Injects X-VTEX-API-AppKey / X-VTEX-API-AppToken
-                                ├── Validates & sanitizes input
-                                └── Proxies to VTEX APIs
-                                        │
-                                        ├── Checkout API (/api/checkout/pub/...)
-                                        ├── OMS API (/api/oms/pvt/...)
-                                        ├── Profile API (/api/profile-system/pvt/...)
-                                        └── Other VTEX services
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: Frontend MUST NOT Call Private VTEX APIs
-
-**Rule**: Client-side code (browser JavaScript, mobile app networking layer) MUST NOT make direct HTTP requests to private VTEX API endpoints. All private API calls must be routed through the BFF.
-
-**Why**: Private VTEX APIs require `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers. If the frontend calls these APIs directly, the credentials must be embedded in client-side code or transmitted to the browser, exposing them to any user who opens browser DevTools. Stolen API keys can be used to access order data, modify pricing, or perform destructive administrative actions.
-
-**Detection**: If you see `fetch` or `axios` calls to `vtexcommercestable.com.br/api/checkout`, `/api/oms`, `/api/profile`, or any `/pvt/` endpoint in client-side code (files under `src/`, `public/`, `app/`, or any browser-executed bundle) → STOP immediately. These calls must be moved to the BFF.
-
-✅ **CORRECT**:
 ```typescript
 // Frontend code — calls BFF, not VTEX directly
 async function getOrderDetails(orderId: string): Promise<Order> {
@@ -99,7 +59,8 @@ async function getOrderDetails(orderId: string): Promise<Order> {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend code — calls VTEX OMS API directly (SECURITY VULNERABILITY)
 async function getOrderDetails(orderId: string): Promise<Order> {
@@ -118,15 +79,20 @@ async function getOrderDetails(orderId: string): Promise<Order> {
 
 ---
 
-### Constraint: VtexIdclientAutCookie MUST Be Managed Server-Side
+### Constraint: VtexIdclientAutCookie MUST be managed server-side
 
-**Rule**: The `VtexIdclientAutCookie` token MUST be stored in a secure server-side session (e.g., encrypted cookie, Redis session store) and MUST NOT be stored in `localStorage`, `sessionStorage`, or any client-accessible JavaScript variable.
+The `VtexIdclientAutCookie` token MUST be stored in a secure server-side session (e.g., encrypted cookie, Redis session store) and MUST NOT be stored in `localStorage`, `sessionStorage`, or any client-accessible JavaScript variable.
 
-**Why**: The `VtexIdclientAutCookie` is a bearer token that authenticates all actions on behalf of a shopper — placing orders, viewing profile data, accessing payment information. If stored client-side, it can be stolen via XSS attacks, browser extensions, or shared/public computers. An attacker with this token can impersonate the shopper.
+**Why this matters**
 
-**Detection**: If you see `VtexIdclientAutCookie` referenced in `localStorage.setItem`, `sessionStorage.setItem`, or assigned to a JavaScript variable in client-side code → STOP immediately. The token must be managed exclusively server-side.
+The `VtexIdclientAutCookie` is a bearer token that authenticates all actions on behalf of a shopper — placing orders, viewing profile data, accessing payment information. If stored client-side, it can be stolen via XSS attacks, browser extensions, or shared/public computers. An attacker with this token can impersonate the shopper.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `VtexIdclientAutCookie` referenced in `localStorage.setItem`, `sessionStorage.setItem`, or assigned to a JavaScript variable in client-side code → STOP immediately. The token must be managed exclusively server-side.
+
+**Correct**
+
 ```typescript
 // BFF route — stores VtexIdclientAutCookie in server-side session
 import { Router, Request, Response } from "express";
@@ -174,7 +140,8 @@ router.get("/api/bff/profile", async (req: Request, res: Response) => {
 });
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Frontend code — stores auth token in localStorage (SECURITY VULNERABILITY)
 function handleLoginCallback() {
@@ -196,15 +163,20 @@ async function getProfile() {
 
 ---
 
-### Constraint: API Keys MUST NOT Appear in Client-Side Code
+### Constraint: API keys MUST NOT appear in client-side code
 
-**Rule**: `VTEX_APP_KEY` and `VTEX_APP_TOKEN` values MUST only exist in server-side environment variables and MUST NOT be present in any file that is bundled, served, or accessible to the browser.
+`VTEX_APP_KEY` and `VTEX_APP_TOKEN` values MUST only exist in server-side environment variables and MUST NOT be present in any file that is bundled, served, or accessible to the browser.
 
-**Why**: API keys grant programmatic access to the VTEX platform with the permissions of their associated role. Exposing them in frontend bundles, public directories, or client-side environment variables (e.g., `NEXT_PUBLIC_*`, `VITE_*`) allows anyone to extract them and make unauthorized API calls.
+**Why this matters**
 
-**Detection**: If you see `VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `X-VTEX-API-AppKey`, or `X-VTEX-API-AppToken` in files under `src/`, `public/`, `app/` directories, or in environment variables prefixed with `NEXT_PUBLIC_`, `VITE_`, or `REACT_APP_` → STOP immediately. Move these to server-side-only environment variables.
+API keys grant programmatic access to the VTEX platform with the permissions of their associated role. Exposing them in frontend bundles, public directories, or client-side environment variables (e.g., `NEXT_PUBLIC_*`, `VITE_*`) allows anyone to extract them and make unauthorized API calls.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `VTEX_APP_KEY`, `VTEX_APP_TOKEN`, `X-VTEX-API-AppKey`, or `X-VTEX-API-AppToken` in files under `src/`, `public/`, `app/` directories, or in environment variables prefixed with `NEXT_PUBLIC_`, `VITE_`, or `REACT_APP_` → STOP immediately. Move these to server-side-only environment variables.
+
+**Correct**
+
 ```typescript
 // BFF server code — reads keys from server-side env vars only
 // File: server/vtex-client.ts (never bundled for browser)
@@ -241,7 +213,8 @@ router.get("/api/bff/orders/:orderId", async (req: Request, res: Response) => {
 export default router;
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // .env file with NEXT_PUBLIC_ prefix — exposed to browser bundle!
 // NEXT_PUBLIC_VTEX_APP_KEY=vtexappkey-mystore-ABCDEF
@@ -262,13 +235,29 @@ async function fetchOrders() {
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Architecture overview — how requests flow through the BFF:
 
-### Step 1: Set Up the BFF Server
+```text
+Frontend (Browser/App)
+    │
+    ├── Direct call (OK): Intelligent Search API (public, read-only)
+    │
+    └── All other requests → BFF Layer (Node.js/Express)
+                                │
+                                ├── Injects VtexIdclientAutCookie from session
+                                ├── Injects X-VTEX-API-AppKey / X-VTEX-API-AppToken
+                                ├── Validates & sanitizes input
+                                └── Proxies to VTEX APIs
+                                        │
+                                        ├── Checkout API (/api/checkout/pub/...)
+                                        ├── OMS API (/api/oms/pvt/...)
+                                        ├── Profile API (/api/profile-system/pvt/...)
+                                        └── Other VTEX services
+```
 
-Create an Express server that will serve as the BFF layer between your frontend and VTEX APIs. All VTEX credentials live exclusively in this server's environment.
+Minimal BFF server setup with session management:
 
 ```typescript
 // server/index.ts
@@ -315,9 +304,7 @@ app.listen(PORT, () => {
 });
 ```
 
-### Step 2: Create a VTEX API Client with Credential Injection
-
-Build a shared utility that injects the correct authentication headers for each request type — either API keys for machine-to-machine calls or `VtexIdclientAutCookie` for shopper-scoped calls.
+VTEX API client with credential injection for both auth types:
 
 ```typescript
 // server/vtex-api-client.ts
@@ -367,9 +354,7 @@ export async function vtexRequest<T>(options: VtexRequestOptions): Promise<T> {
 }
 ```
 
-### Step 3: Implement BFF Route Handlers
-
-Create route handlers that validate incoming requests, extract session data, and proxy to VTEX APIs with proper authentication.
+BFF route handler with session-based auth and input validation:
 
 ```typescript
 // server/routes/orders.ts
@@ -407,9 +392,7 @@ ordersRoutes.get("/:orderId", async (req: Request, res: Response) => {
 });
 ```
 
-### Complete Example
-
-A full BFF setup with authentication flow, session management, and API proxying:
+Authentication flow with server-side token management:
 
 ```typescript
 // server/routes/auth.ts
@@ -464,101 +447,86 @@ authRoutes.get("/status", (req: Request, res: Response) => {
 });
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Proxying Intelligent Search through BFF**: Routing every VTEX API call through the BFF, including Intelligent Search, adds unnecessary latency and server load. Intelligent Search is a public, read-only API designed for direct frontend consumption. Call it directly from the frontend.
 
-### Anti-Pattern: Proxying All APIs Including Intelligent Search
+  ```typescript
+  // Frontend code — call Intelligent Search directly (this is correct!)
+  async function searchProducts(query: string, from: number = 0, to: number = 19): Promise<SearchResult> {
+    const baseUrl = `https://${STORE_ACCOUNT}.vtexcommercestable.com.br`;
+    const response = await fetch(
+      `${baseUrl}/api/io/_v/api/intelligent-search/product_search/?query=${encodeURIComponent(query)}&from=${from}&to=${to}&locale=en-US`,
+    );
+    return response.json();
+  }
+  ```
 
-**What happens**: Developers route every VTEX API call through the BFF, including Intelligent Search, adding unnecessary latency and server load to search queries.
+- **Sharing a single API key across all BFF operations**: Using one API key with broad permissions (e.g., Owner role) for all BFF operations means a compromised key grants access to every VTEX resource. Create separate API keys for different BFF modules with minimal required permissions.
 
-**Why it fails**: Intelligent Search is a public, read-only API designed for direct frontend consumption. Proxying it through the BFF adds a network hop, increases latency on every search interaction, and puts unnecessary load on the BFF server. Search queries are high-frequency operations that benefit from direct CDN-cached responses.
+  ```typescript
+  // server/vtex-credentials.ts — separate keys per domain
+  export const credentials = {
+    oms: {
+      appKey: process.env.VTEX_OMS_APP_KEY!,
+      appToken: process.env.VTEX_OMS_APP_TOKEN!,
+    },
+    checkout: {
+      appKey: process.env.VTEX_CHECKOUT_APP_KEY!,
+      appToken: process.env.VTEX_CHECKOUT_APP_TOKEN!,
+    },
+    catalog: {
+      appKey: process.env.VTEX_CATALOG_APP_KEY!,
+      appToken: process.env.VTEX_CATALOG_APP_TOKEN!,
+    },
+  } as const;
+  ```
 
-**Fix**: Call Intelligent Search directly from the frontend. Only proxy APIs that require authentication or handle sensitive data.
+- **Logging API credentials or auth tokens**: Logging request headers or full request objects during debugging inadvertently writes API keys or `VtexIdclientAutCookie` values to log files, which may be accessible to multiple team members or attackers. Sanitize all log output to strip sensitive headers before logging.
 
-```typescript
-// Frontend code — call Intelligent Search directly (this is correct!)
-async function searchProducts(query: string, from: number = 0, to: number = 19): Promise<SearchResult> {
-  const baseUrl = `https://${STORE_ACCOUNT}.vtexcommercestable.com.br`;
-  const response = await fetch(
-    `${baseUrl}/api/io/_v/api/intelligent-search/product_search/?query=${encodeURIComponent(query)}&from=${from}&to=${to}&locale=en-US`,
-  );
-  return response.json();
-}
-```
+  ```typescript
+  // server/middleware/request-logger.ts
+  import { Request, Response, NextFunction } from "express";
 
----
+  const SENSITIVE_HEADERS = [
+    "x-vtex-api-appkey",
+    "x-vtex-api-apptoken",
+    "cookie",
+    "authorization",
+  ];
 
-### Anti-Pattern: Sharing a Single API Key Across All BFF Operations
+  export function requestLogger(req: Request, _res: Response, next: NextFunction) {
+    const sanitizedHeaders = Object.fromEntries(
+      Object.entries(req.headers).map(([key, value]) =>
+        SENSITIVE_HEADERS.includes(key.toLowerCase())
+          ? [key, "[REDACTED]"]
+          : [key, value]
+      )
+    );
 
-**What happens**: Developers use one API key with broad permissions (e.g., Owner role) for all BFF operations instead of creating scoped keys for different operations.
+    console.log({
+      method: req.method,
+      path: req.path,
+      headers: sanitizedHeaders,
+      timestamp: new Date().toISOString(),
+    });
 
-**Why it fails**: If the API key is compromised (e.g., via a server vulnerability or log leak), the attacker gains access to every VTEX resource. The principle of least privilege requires that each key only has the permissions it needs.
+    next();
+  }
+  ```
 
-**Fix**: Create separate API keys for different BFF modules with minimal required permissions. Use one key for OMS read access, another for checkout operations, etc.
+## Review checklist
 
-```typescript
-// server/vtex-credentials.ts — separate keys per domain
-export const credentials = {
-  oms: {
-    appKey: process.env.VTEX_OMS_APP_KEY!,
-    appToken: process.env.VTEX_OMS_APP_TOKEN!,
-  },
-  checkout: {
-    appKey: process.env.VTEX_CHECKOUT_APP_KEY!,
-    appToken: process.env.VTEX_CHECKOUT_APP_TOKEN!,
-  },
-  catalog: {
-    appKey: process.env.VTEX_CATALOG_APP_KEY!,
-    appToken: process.env.VTEX_CATALOG_APP_TOKEN!,
-  },
-} as const;
-```
-
----
-
-### Anti-Pattern: Logging API Credentials or Auth Tokens
-
-**What happens**: Developers log request headers or full request objects during debugging, inadvertently writing API keys or `VtexIdclientAutCookie` values to log files.
-
-**Why it fails**: Log files are often stored in centralized logging systems (e.g., CloudWatch, Datadog) accessible to multiple team members. Credentials in logs can be harvested by anyone with log access or by attackers who compromise the logging infrastructure.
-
-**Fix**: Sanitize all log output to strip sensitive headers before logging. Never log full request/response objects.
-
-```typescript
-// server/middleware/request-logger.ts
-import { Request, Response, NextFunction } from "express";
-
-const SENSITIVE_HEADERS = [
-  "x-vtex-api-appkey",
-  "x-vtex-api-apptoken",
-  "cookie",
-  "authorization",
-];
-
-export function requestLogger(req: Request, _res: Response, next: NextFunction) {
-  const sanitizedHeaders = Object.fromEntries(
-    Object.entries(req.headers).map(([key, value]) =>
-      SENSITIVE_HEADERS.includes(key.toLowerCase())
-        ? [key, "[REDACTED]"]
-        : [key, value]
-    )
-  );
-
-  console.log({
-    method: req.method,
-    path: req.path,
-    headers: sanitizedHeaders,
-    timestamp: new Date().toISOString(),
-  });
-
-  next();
-}
-```
+- [ ] Is a BFF layer present? Every headless VTEX project requires one — no exceptions.
+- [ ] Are all private VTEX API calls (`/pvt/` endpoints) routed through the BFF?
+- [ ] Are `VTEX_APP_KEY` and `VTEX_APP_TOKEN` stored exclusively in server-side environment variables?
+- [ ] Are API keys absent from any `NEXT_PUBLIC_*`, `VITE_*`, or `REACT_APP_*` environment variables?
+- [ ] Is `VtexIdclientAutCookie` stored in a server-side session, not in `localStorage` or `sessionStorage`?
+- [ ] Is Intelligent Search called directly from the frontend (not unnecessarily proxied through BFF)?
+- [ ] Are separate API keys used for different BFF modules with minimal permissions?
+- [ ] Are sensitive headers redacted from all log output?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Headless commerce overview](https://developers.vtex.com/docs/guides/headless-commerce) — Core architecture guide for building headless stores on VTEX
 - [Headless authentication](https://developers.vtex.com/docs/guides/headless-authentication) — OAuth-based shopper authentication flow for headless implementations
