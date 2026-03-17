@@ -9,29 +9,30 @@ Follow these patterns and constraints when assisting developers.
 
 # App Architecture & Manifest Configuration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The foundational structure of every VTEX IO app — the `manifest.json` file, builder system, policy declarations, dependency management, `service.json` resource limits, and app lifecycle (link, publish, deploy).
+Use this skill when working with the foundational structure of a VTEX IO app — the `manifest.json` file, builder system, policy declarations, dependency management, `service.json` resource limits, and app lifecycle (link, publish, deploy).
 
-**When to use it**: When creating a new VTEX IO app from scratch, adding a builder to an existing app, configuring policies for API access, or troubleshooting deployment failures related to manifest misconfiguration.
+- Creating a new VTEX IO app from scratch
+- Adding a builder to an existing app
+- Configuring policies for API access
+- Troubleshooting deployment failures related to manifest misconfiguration
 
-**What you'll learn**:
-- How to configure `manifest.json` with the correct fields, builders, and policies
-- Which builders to use for different app capabilities (backend, frontend, GraphQL, admin, pixel, messages, store themes)
-- How to declare policies for accessing VTEX APIs and external services
-- How `service.json` controls memory and timeout limits for backend services
+Do not use this skill for:
+- Backend service implementation details (use `vtex-io-service-apps` instead)
+- React component development (use `vtex-io-react-apps` instead)
+- GraphQL schema and resolver details (use `vtex-io-graphql-api` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Every VTEX IO app starts with `manifest.json` — it defines identity (`vendor`, `name`, `version`), builders, dependencies, and policies.
+- Use the builder that matches the directory: `node` for `/node`, `react` for `/react`, `graphql` for `/graphql`, `admin` for `/admin`, `pixel` for `/pixel`, `messages` for `/messages`, `store` for `/store`, `masterdata` for `/masterdata`, `styles` for `/styles`.
+- Declare policies for every external host your app calls and every VTEX Admin resource it accesses.
+- Use `service.json` in `/node` to configure memory (max 512MB), timeout, autoscaling, and route definitions.
+- Use semver ranges (`3.x`) for dependencies, not exact versions.
+- Use `peerDependencies` for apps that must be present but should not be auto-installed.
 
-### Concept 1: Manifest.json
-
-The `manifest.json` file is the entry point for every VTEX IO app. It defines the app's identity (`vendor`, `name`, `version`), declares which `builders` will process the app's code, lists `dependencies` on other VTEX IO apps, and specifies `policies` granting access to external services and VTEX resources. Without a valid manifest, the app cannot be linked, published, or deployed.
-
-### Concept 2: Builders
-
-Builders are abstractions that process specific directories in your app. Each builder transforms code in its corresponding folder into runnable artifacts. The key builders are:
+Builders reference:
 
 | Builder | Directory | Purpose |
 |---------|-----------|---------|
@@ -45,42 +46,12 @@ Builders are abstractions that process specific directories in your app. Each bu
 | `masterdata` | `/masterdata` | Master Data v2 entity schemas and triggers |
 | `styles` | `/styles` | CSS/Tachyons configuration for Store Framework themes |
 
-### Concept 3: Policies
-
-Policies grant your app permission to access external resources. There are three types:
-
+Policy types:
 1. **Outbound-access policies**: Grant access to explicit URLs (external APIs or VTEX endpoints).
 2. **License Manager policies**: Grant access to VTEX Admin resources using resource keys.
 3. **App role-based policies**: Grant access to routes or GraphQL queries exposed by other IO apps, using the format `{vendor}.{app-name}:{policy-name}`.
 
-Without the correct policies, API calls from your app will fail with `403 Forbidden` errors at runtime.
-
-### Concept 4: service.json
-
-The `service.json` file in the `/node` directory configures runtime resource limits for backend services:
-
-```json
-{
-  "memory": 256,
-  "timeout": 30,
-  "minReplicas": 2,
-  "maxReplicas": 10,
-  "workers": 4,
-  "routes": {
-    "status": {
-      "path": "/_v/status/:code",
-      "public": true
-    }
-  }
-}
-```
-
-- `memory`: Maximum memory in MB (default 256, max 512)
-- `timeout`: Request timeout in seconds (default 30)
-- `minReplicas` / `maxReplicas`: Autoscaling range
-- `routes`: HTTP route definitions with path patterns and access control
-
-**Architecture/Data Flow**:
+Architecture:
 
 ```text
 manifest.json
@@ -97,19 +68,22 @@ manifest.json
 └── peerDependencies → apps required but not auto-installed
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Declare All Required Builders
 
-**Rule**: Every directory in your app that contains processable code MUST have a corresponding builder declared in `manifest.json`. If you have a `/node` directory, the `node` builder MUST be declared. If you have a `/react` directory, the `react` builder MUST be declared.
+Every directory in your app that contains processable code MUST have a corresponding builder declared in `manifest.json`. If you have a `/node` directory, the `node` builder MUST be declared. If you have a `/react` directory, the `react` builder MUST be declared.
 
-**Why**: Without the builder declaration, the VTEX IO platform ignores the directory entirely. Your backend code will not compile, your React components will not render, and your GraphQL schemas will not be registered. The app will link successfully but the functionality will silently be absent.
+**Why this matters**
 
-**Detection**: If you see backend TypeScript code in a `/node` directory but the manifest does not declare `"node": "7.x"` in `builders`, STOP and add the builder. Same applies to `/react` without `"react": "3.x"`, `/graphql` without `"graphql": "1.x"`, etc.
+Without the builder declaration, the VTEX IO platform ignores the directory entirely. Your backend code will not compile, your React components will not render, and your GraphQL schemas will not be registered. The app will link successfully but the functionality will silently be absent.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see backend TypeScript code in a `/node` directory but the manifest does not declare `"node": "7.x"` in `builders`, STOP and add the builder. Same applies to `/react` without `"react": "3.x"`, `/graphql` without `"graphql": "1.x"`, etc.
+
+**Correct**
+
 ```json
 {
   "name": "my-service-app",
@@ -127,7 +101,8 @@ manifest.json
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "name": "my-service-app",
@@ -141,23 +116,26 @@ manifest.json
   "dependencies": {},
   "policies": []
 }
-// Missing "node" and "graphql" builders — the /node and /graphql
-// directories will be completely ignored. Backend code won't compile,
-// GraphQL schema won't be registered. The app links without errors
-// but nothing works.
 ```
+
+Missing "node" and "graphql" builders — the /node and /graphql directories will be completely ignored. Backend code won't compile, GraphQL schema won't be registered. The app links without errors but nothing works.
 
 ---
 
 ### Constraint: Declare Policies for All External Access
 
-**Rule**: Every external API call or VTEX resource access MUST have a corresponding policy in `manifest.json`. This includes outbound HTTP calls to external hosts, VTEX Admin resource access, and consumption of other apps' GraphQL APIs.
+Every external API call or VTEX resource access MUST have a corresponding policy in `manifest.json`. This includes outbound HTTP calls to external hosts, VTEX Admin resource access, and consumption of other apps' GraphQL APIs.
 
-**Why**: VTEX IO sandboxes apps for security. Without the proper policy, any outbound HTTP request will be blocked at the infrastructure level, returning a `403 Forbidden` error. This is not a code issue — it is a platform-level restriction.
+**Why this matters**
 
-**Detection**: If you see code making API calls (via clients or HTTP) to a host, STOP and verify that an `outbound-access` policy exists for that host in the manifest. If you see `licenseManager.canAccessResource(...)`, verify a License Manager policy exists.
+VTEX IO sandboxes apps for security. Without the proper policy, any outbound HTTP request will be blocked at the infrastructure level, returning a `403 Forbidden` error. This is not a code issue — it is a platform-level restriction.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see code making API calls (via clients or HTTP) to a host, STOP and verify that an `outbound-access` policy exists for that host in the manifest. If you see `licenseManager.canAccessResource(...)`, verify a License Manager policy exists.
+
+**Correct**
+
 ```json
 {
   "policies": [
@@ -188,27 +166,32 @@ manifest.json
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "policies": []
 }
-// Empty policies array while the app makes calls to api.vtex.com
-// and uses Master Data. All outbound requests will fail at runtime
-// with 403 Forbidden errors that are difficult to debug.
 ```
+
+Empty policies array while the app makes calls to api.vtex.com and uses Master Data. All outbound requests will fail at runtime with 403 Forbidden errors that are difficult to debug.
 
 ---
 
 ### Constraint: Follow App Naming Conventions
 
-**Rule**: App names MUST be in kebab-case (lowercase letters separated by hyphens). The vendor MUST match the VTEX account name. Version MUST follow Semantic Versioning 2.0.0.
+App names MUST be in kebab-case (lowercase letters separated by hyphens). The vendor MUST match the VTEX account name. Version MUST follow Semantic Versioning 2.0.0.
 
-**Why**: Apps with invalid names cannot be published to the VTEX App Store. Names with special characters or uppercase letters will be rejected by the builder-hub. Vendor mismatch prevents the account from managing the app.
+**Why this matters**
 
-**Detection**: If you see an app name with uppercase letters, underscores, special characters, or numbers at the beginning, STOP and fix the name.
+Apps with invalid names cannot be published to the VTEX App Store. Names with special characters or uppercase letters will be rejected by the builder-hub. Vendor mismatch prevents the account from managing the app.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see an app name with uppercase letters, underscores, special characters, or numbers at the beginning, STOP and fix the name.
+
+**Correct**
+
 ```json
 {
   "name": "order-status-dashboard",
@@ -217,39 +200,29 @@ manifest.json
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "name": "Order_Status_Dashboard",
   "vendor": "mycompany",
   "version": "2.1"
 }
-// Uppercase letters and underscores in the name will be rejected.
-// Version "2.1" is not valid semver — must be "2.1.0".
 ```
 
-## Implementation Pattern
+Uppercase letters and underscores in the name will be rejected. Version "2.1" is not valid semver — must be "2.1.0".
 
-**The canonical, recommended way to scaffold and configure a VTEX IO app.**
+## Preferred pattern
 
-### Step 1: Initialize the App
-
-Use the VTEX IO CLI to create a new app from a boilerplate template:
+Initialize with the VTEX IO CLI:
 
 ```bash
-# Install VTEX IO CLI if not already installed
 vtex init
-
-# Select the appropriate template:
-# - service-example: Backend service with Node
-# - graphql-example: GraphQL API with Node
-# - react-app-template: Frontend React app
-# - store-theme: Store Framework theme
 ```
 
-### Step 2: Configure manifest.json
+Select the appropriate template: `service-example`, `graphql-example`, `react-app-template`, or `store-theme`.
 
-Edit the manifest with your app's identity and required builders:
+Recommended manifest configuration:
 
 ```json
 {
@@ -287,9 +260,7 @@ Edit the manifest with your app's identity and required builders:
 }
 ```
 
-### Step 3: Configure service.json for Backend Apps
-
-Create `/node/service.json` to define resource limits and routes:
+Recommended `service.json` for backend apps:
 
 ```json
 {
@@ -311,9 +282,7 @@ Create `/node/service.json` to define resource limits and routes:
 }
 ```
 
-### Step 4: Set Up the Directory Structure
-
-Create the directories matching your declared builders:
+Recommended directory structure:
 
 ```text
 my-app/
@@ -342,9 +311,7 @@ my-app/
     └── README.md
 ```
 
-### Complete Example
-
-A full `manifest.json` for a comprehensive app using multiple builders:
+Full `manifest.json` for a comprehensive app using multiple builders:
 
 ```json
 {
@@ -406,80 +373,22 @@ A full `manifest.json` for a comprehensive app using multiple builders:
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Declaring unused builders**: Adding builders "just in case" creates overhead during the build process. Unused builder directories can cause build warnings. Only declare builders your app actively uses.
+- **Wildcard outbound policies**: Using `"host": "*"` or `"path": "/*"` is a security risk, will be rejected during app review, and makes security audits difficult. Declare specific policies for each external service.
+- **Hardcoding version in dependencies**: Pinning exact versions like `"vtex.store-components": "3.165.0"` prevents receiving bug fixes. Use major version ranges with `x` wildcard: `"vtex.store-components": "3.x"`.
 
-### Anti-Pattern: Declaring Unused Builders
+## Review checklist
 
-**What happens**: Developers add builders "just in case" — declaring `react`, `graphql`, `admin`, and `store` builders even though the app only needs `node`.
-
-**Why it fails**: Each builder creates overhead during the build process. Unused builder directories that are empty or missing can cause build warnings. Worse, if someone accidentally adds files to a builder directory, they may introduce unintended functionality.
-
-**Fix**: Only declare builders that your app actively uses. Remove any builder declarations without corresponding directory content.
-
-```json
-{
-  "builders": {
-    "node": "7.x",
-    "graphql": "1.x"
-  }
-}
-```
-
----
-
-### Anti-Pattern: Wildcard Outbound Policies
-
-**What happens**: Developers use overly broad outbound-access policies like `"host": "*"` or `"path": "/*"` to avoid policy errors during development.
-
-**Why it fails**: Overly permissive policies are a security risk and will be rejected during app review for the VTEX App Store. They also make it unclear which external services the app actually communicates with, making security audits difficult.
-
-**Fix**: Declare specific policies for each external service your app communicates with:
-
-```json
-{
-  "policies": [
-    {
-      "name": "outbound-access",
-      "attrs": {
-        "host": "api.vtex.com",
-        "path": "/api/*"
-      }
-    },
-    {
-      "name": "outbound-access",
-      "attrs": {
-        "host": "my-external-api.example.com",
-        "path": "/v1/*"
-      }
-    }
-  ]
-}
-```
-
----
-
-### Anti-Pattern: Hardcoding Version in Dependencies
-
-**What happens**: Developers pin exact versions in dependencies like `"vtex.store-components": "3.165.0"` instead of using version ranges.
-
-**Why it fails**: Exact versions prevent your app from receiving bug fixes and patches from dependency updates. VTEX IO uses semver ranges, and minor/patch updates are backward-compatible. Pinning forces users to manually update your app for every dependency patch.
-
-**Fix**: Use major version ranges with the `x` wildcard:
-
-```json
-{
-  "dependencies": {
-    "vtex.store-components": "3.x",
-    "vtex.styleguide": "9.x"
-  }
-}
-```
+- [ ] Does every code directory (`/node`, `/react`, `/graphql`, etc.) have a matching builder in `manifest.json`?
+- [ ] Are all external hosts and VTEX resources declared in `policies`?
+- [ ] Is the app name kebab-case, vendor matching account, version valid semver?
+- [ ] Does `service.json` exist for apps with the `node` builder?
+- [ ] Are dependencies using major version ranges (`3.x`) instead of exact versions?
+- [ ] Are placeholder values (vendor, app name, policies) replaced with real values?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Manifest](https://developers.vtex.com/docs/guides/vtex-io-documentation-manifest) — Complete reference for all manifest.json fields and their usage
 - [Builders](https://developers.vtex.com/docs/guides/vtex-io-documentation-builders) — Full list of available builders with descriptions and usage examples
@@ -490,31 +399,37 @@ A full `manifest.json` for a comprehensive app using multiple builders:
 
 ---
 
-## vtex-io-graphql
+## vtex-io-graphql-api
 
 > Apply when working with GraphQL schema files in graphql/ or implementing resolvers in node/resolvers/ for VTEX IO apps. Covers schema.graphql definitions, @cacheControl and @auth directives, custom type definitions, and resolver registration in the Service class. Use for exposing data through GraphQL queries and mutations with proper cache control and authentication enforcement.
 
 # GraphQL Schemas & Resolvers
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Implementing GraphQL APIs in VTEX IO apps using the `graphql` builder — defining schemas in `.graphql` files, writing resolver functions in TypeScript, configuring `@cacheControl` and `@auth` directives, organizing the `graphql/` directory, and wiring resolvers into the Service class.
+Use this skill when your VTEX IO app needs to expose a GraphQL API — either for frontend React components to query, for other VTEX IO apps to consume, or for implementing custom data aggregation layers over VTEX Commerce APIs.
 
-**When to use it**: When your VTEX IO app needs to expose a GraphQL API — either for frontend React components to query, for other VTEX IO apps to consume, or for implementing custom data aggregation layers over VTEX Commerce APIs.
+- Defining schemas in `.graphql` files in the `/graphql` directory
+- Writing resolver functions in TypeScript in `/node/resolvers/`
+- Configuring `@cacheControl` and `@auth` directives
+- Wiring resolvers into the Service class
 
-**What you'll learn**:
-- How to structure the `graphql/` directory with schemas, directives, and types
-- How to write resolver functions that use `ctx.clients` for data access
-- How to use `@cacheControl` to optimize performance and `@auth` to enforce authentication
-- How to instantiate resolvers in the Service entry point
+Do not use this skill for:
+- Backend service structure and client system (use `vtex-io-service-apps` instead)
+- Manifest and builder configuration (use `vtex-io-app-structure` instead)
+- MasterData integration details (use `vtex-io-masterdata` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- The `graphql` builder processes `.graphql` files in `/graphql` and merges them into a single schema.
+- Split definitions across multiple files for maintainability: `schema.graphql` for root types, `directives.graphql` for directive declarations, `types/*.graphql` for custom types.
+- Use `@cacheControl(scope: PUBLIC, maxAge: SHORT|MEDIUM|LONG)` on all public Query fields. `PUBLIC` = shared CDN cache, `PRIVATE` = per-user cache.
+- Use `@auth` on all Mutations and on Queries that return sensitive or user-specific data.
+- Never use `@cacheControl` on Mutations.
+- Resolver function keys in the Service entry point MUST exactly match the field names in `schema.graphql`.
+- Always use `ctx.clients` in resolvers for data access — never raw HTTP calls.
 
-### Concept 1: GraphQL Builder and Directory Structure
-
-The `graphql` builder processes `.graphql` files in the `/graphql` directory. The recommended structure is:
+Recommended directory structure:
 
 ```text
 graphql/
@@ -525,98 +440,27 @@ graphql/
     └── Product.graphql   # One file per type for organization
 ```
 
-The builder merges all `.graphql` files into a single schema. You can split definitions across multiple files and subdirectories for maintainability.
+Built-in directives:
+- **`@cacheControl`**: `scope` (`PUBLIC`/`PRIVATE`), `maxAge` (`SHORT` 30s, `MEDIUM` 5min, `LONG` 1h)
+- **`@auth`**: Enforces valid VTEX authentication token. Without it, unauthenticated users can call the endpoint.
+- **`@smartcache`**: Automatically caches query results in VTEX infrastructure.
 
-### Concept 2: Schema Definition
-
-The `schema.graphql` file defines the root Query and Mutation types — the entry points of your API:
-
-```graphql
-type Query {
-  reviews(productId: String!, limit: Int): [Review]
-    @cacheControl(scope: PUBLIC, maxAge: SHORT)
-
-  review(id: ID!): Review
-    @cacheControl(scope: PUBLIC, maxAge: SHORT)
-}
-
-type Mutation {
-  createReview(review: ReviewInput!): Review @auth
-  deleteReview(id: ID!): Boolean @auth
-}
-```
-
-### Concept 3: Directives — @cacheControl and @auth
-
-VTEX IO provides built-in GraphQL directives:
-
-**`@cacheControl`** — Controls HTTP caching for queries:
-- `scope`: `PUBLIC` (shared CDN cache) or `PRIVATE` (per-user cache)
-- `maxAge`: `SHORT` (30s), `MEDIUM` (5min), `LONG` (1h)
-
-**`@auth`** — Enforces authentication. The resolver only executes if the request includes a valid VTEX authentication token. Without `@auth`, unauthenticated users can call the endpoint.
-
-**`@smartcache`** — Automatically caches query results in VTEX infrastructure.
-
-These directives are declared in `directives.graphql`:
-
-```graphql
-directive @cacheControl(
-  scope: CacheControlScope
-  maxAge: CacheControlMaxAge
-) on FIELD_DEFINITION
-
-enum CacheControlScope {
-  PUBLIC
-  PRIVATE
-}
-
-enum CacheControlMaxAge {
-  SHORT
-  MEDIUM
-  LONG
-}
-
-directive @auth on FIELD_DEFINITION
-directive @smartcache on FIELD_DEFINITION
-```
-
-### Concept 4: Resolvers
-
-Resolvers are TypeScript functions in the `/node/resolvers/` directory that execute when a GraphQL field is queried. Each resolver receives four arguments: `root`, `args`, `ctx`, and `info`. The `ctx` object provides access to `ctx.clients` for data fetching.
-
-Resolvers are instantiated in the Service entry point (`node/index.ts`) inside the `graphql.resolvers` field:
-
-```typescript
-export default new Service({
-  graphql: {
-    resolvers: {
-      Query: {
-        reviews: getReviews,
-        review: getReview,
-      },
-      Mutation: {
-        createReview: createReview,
-        deleteReview: deleteReview,
-      },
-    },
-  },
-})
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Declare the graphql Builder
 
-**Rule**: Any app using `.graphql` schema files MUST declare the `graphql` builder in `manifest.json`. The `graphql` builder interprets the schema and registers it with the VTEX IO runtime.
+Any app using `.graphql` schema files MUST declare the `graphql` builder in `manifest.json`. The `graphql` builder interprets the schema and registers it with the VTEX IO runtime.
 
-**Why**: Without the `graphql` builder declaration, the `/graphql` directory is completely ignored. Schema files will not be processed, resolvers will not be registered, and GraphQL queries will return "schema not found" errors. The app will link without errors but GraphQL will silently not work.
+**Why this matters**
 
-**Detection**: If you see `.graphql` files in a `/graphql` directory but the manifest does not include `"graphql": "1.x"` in `builders`, STOP and add the builder declaration.
+Without the `graphql` builder declaration, the `/graphql` directory is completely ignored. Schema files will not be processed, resolvers will not be registered, and GraphQL queries will return "schema not found" errors. The app will link without errors but GraphQL will silently not work.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `.graphql` files in a `/graphql` directory but the manifest does not include `"graphql": "1.x"` in `builders`, STOP and add the builder declaration.
+
+**Correct**
+
 ```json
 {
   "builders": {
@@ -626,81 +470,86 @@ export default new Service({
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "builders": {
     "node": "7.x"
   }
 }
-// Missing "graphql": "1.x" — the /graphql directory with schema files
-// is ignored. GraphQL queries return errors because no schema is
-// registered. The app links successfully, masking the problem.
 ```
+
+Missing `"graphql": "1.x"` — the `/graphql` directory with schema files is ignored. GraphQL queries return errors because no schema is registered. The app links successfully, masking the problem.
 
 ---
 
 ### Constraint: Use @cacheControl on Public Queries
 
-**Rule**: All public-facing Query fields (those fetching data that is not user-specific) MUST include the `@cacheControl` directive with an appropriate `scope` and `maxAge`. Mutations MUST NOT use `@cacheControl`.
+All public-facing Query fields (those fetching data that is not user-specific) MUST include the `@cacheControl` directive with an appropriate `scope` and `maxAge`. Mutations MUST NOT use `@cacheControl`.
 
-**Why**: Without `@cacheControl`, every query hits your resolver on every request — no CDN caching, no edge caching, no shared caching. This leads to unnecessary load on VTEX infrastructure, slow response times for end users, and potential rate limiting. For public product data like reviews or catalog info, caching is critical for performance.
+**Why this matters**
 
-**Detection**: If a Query field returns public data (not user-specific) and does not have `@cacheControl`, warn the developer to add it. If a Mutation has `@cacheControl`, STOP and remove it.
+Without `@cacheControl`, every query hits your resolver on every request — no CDN caching, no edge caching, no shared caching. This leads to unnecessary load on VTEX infrastructure, slow response times, and potential rate limiting. For public product data, caching is critical for performance.
 
-✅ **CORRECT**:
+**Detection**
+
+If a Query field returns public data (not user-specific) and does not have `@cacheControl`, warn the developer to add it. If a Mutation has `@cacheControl`, STOP and remove it.
+
+**Correct**
+
 ```graphql
 type Query {
-  # Public product data — cached at CDN for 30 seconds
   reviews(productId: String!, limit: Int): [Review]
     @cacheControl(scope: PUBLIC, maxAge: SHORT)
 
-  # Public catalog data — cached for 5 minutes
   productMetadata(slug: String!): ProductMetadata
     @cacheControl(scope: PUBLIC, maxAge: MEDIUM)
 
-  # User-specific data — cached per-user only
   myReviews: [Review]
     @cacheControl(scope: PRIVATE, maxAge: SHORT)
     @auth
 }
 
 type Mutation {
-  # Mutations NEVER have @cacheControl
   createReview(review: ReviewInput!): Review @auth
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```graphql
 type Query {
-  # No cache control — every request hits the resolver
   reviews(productId: String!, limit: Int): [Review]
 
-  # Missing @auth on user-specific data
   myReviews: [Review]
 }
 
 type Mutation {
-  # @cacheControl on a mutation — this makes no sense
   createReview(review: ReviewInput!): Review
     @cacheControl(scope: PUBLIC, maxAge: LONG)
 }
 ```
 
+No cache control on queries (every request hits the resolver), missing `@auth` on user-specific data, and `@cacheControl` on a mutation (makes no sense).
+
 ---
 
 ### Constraint: Resolver Names Must Match Schema Fields
 
-**Rule**: Resolver function keys in the Service entry point MUST exactly match the field names defined in `schema.graphql`. The resolver object structure must mirror the GraphQL type hierarchy.
+Resolver function keys in the Service entry point MUST exactly match the field names defined in `schema.graphql`. The resolver object structure must mirror the GraphQL type hierarchy.
 
-**Why**: The GraphQL runtime maps incoming queries to resolver functions by name. If the resolver key does not match the schema field name, the field will resolve to `null` without any error — a silent failure that is extremely difficult to debug.
+**Why this matters**
 
-**Detection**: If a schema field has no matching resolver key (or vice versa), STOP. Cross-check every Query and Mutation field against the resolver registration in `node/index.ts`.
+The GraphQL runtime maps incoming queries to resolver functions by name. If the resolver key does not match the schema field name, the field will resolve to `null` without any error — a silent failure that is extremely difficult to debug.
 
-✅ **CORRECT**:
+**Detection**
+
+If a schema field has no matching resolver key (or vice versa), STOP. Cross-check every Query and Mutation field against the resolver registration in `node/index.ts`.
+
+**Correct**
+
 ```graphql
-# graphql/schema.graphql
 type Query {
   reviews(productId: String!): [Review]
   reviewById(id: ID!): Review
@@ -721,7 +570,8 @@ export default new Service({
 })
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // node/index.ts — resolver key "getReviews" does not match schema field "reviews"
 export default new Service({
@@ -734,14 +584,13 @@ export default new Service({
     },
   },
 })
-// Both fields will silently resolve to null. No error in logs.
 ```
 
-## Implementation Pattern
+Both fields will silently resolve to null. No error in logs.
 
-**The canonical, recommended way to build a GraphQL API in a VTEX IO app.**
+## Preferred pattern
 
-### Step 1: Add the GraphQL Builder to Manifest
+Add the GraphQL builder to manifest:
 
 ```json
 {
@@ -752,10 +601,9 @@ export default new Service({
 }
 ```
 
-### Step 2: Define the Schema
+Define the schema:
 
 ```graphql
-# graphql/schema.graphql
 type Query {
   reviews(productId: String!, limit: Int, offset: Int): ReviewsResponse
     @cacheControl(scope: PUBLIC, maxAge: SHORT)
@@ -771,10 +619,9 @@ type Mutation {
 }
 ```
 
-### Step 3: Define Custom Types
+Define custom types:
 
 ```graphql
-# graphql/types/Review.graphql
 type Review {
   id: ID!
   productId: String!
@@ -800,10 +647,9 @@ input ReviewInput {
 }
 ```
 
-### Step 4: Declare Directives
+Declare directives:
 
 ```graphql
-# graphql/directives.graphql
 directive @cacheControl(
   scope: CacheControlScope
   maxAge: CacheControlMaxAge
@@ -824,7 +670,7 @@ directive @auth on FIELD_DEFINITION
 directive @smartcache on FIELD_DEFINITION
 ```
 
-### Step 5: Implement Resolvers
+Implement resolvers:
 
 ```typescript
 // node/resolvers/reviews.ts
@@ -909,7 +755,7 @@ export const mutations = {
 }
 ```
 
-### Step 6: Wire Resolvers into the Service
+Wire resolvers into the Service:
 
 ```typescript
 // node/index.ts
@@ -938,12 +784,9 @@ export default new Service<Clients, RecorderState, ParamsContext>({
 })
 ```
 
-### Complete Example
-
 Testing the GraphQL API after linking:
 
 ```graphql
-# Query in GraphiQL at https://{workspace}--{account}.myvtex.com/_v/graphql
 query GetReviews {
   reviews(productId: "12345", limit: 5) {
     data {
@@ -973,81 +816,37 @@ mutation CreateReview {
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Defining resolvers without matching schema fields**: The GraphQL runtime only exposes fields defined in the schema. Resolvers without matching fields are silently ignored. Conversely, schema fields without resolvers return `null`. Always define the schema first, then implement matching resolvers with identical names.
+- **Querying external APIs directly in resolvers**: Using `fetch()` or `axios` bypasses the `@vtex/api` client system, losing caching, retries, metrics, and authentication. Always use `ctx.clients` in resolvers.
+- **Missing @auth on mutation endpoints**: Without `@auth`, any anonymous user can call the mutation — a critical security vulnerability. Always add `@auth` to mutations and queries returning sensitive data.
+- **Missing @cacheControl on public queries**: Every request hits the resolver without caching, causing unnecessary load and slow responses. Add appropriate cache directives to all public Query fields.
 
-### Anti-Pattern: Defining Resolvers Without Matching Schema Fields
+## Review checklist
 
-**What happens**: Developers write resolver functions but forget to define the corresponding fields in the GraphQL schema, or use different names.
+- [ ] Is the `graphql` builder declared in `manifest.json`?
+- [ ] Do all public Query fields have `@cacheControl` with appropriate scope and maxAge?
+- [ ] Do all Mutations and sensitive Queries have `@auth`?
+- [ ] Do resolver function keys exactly match schema field names?
+- [ ] Are resolvers using `ctx.clients` for data access (no raw HTTP calls)?
+- [ ] Are directive declarations present in `directives.graphql`?
+- [ ] Is the resolver wired into the Service entry point under `graphql.resolvers`?
 
-**Why it fails**: The GraphQL runtime only exposes fields defined in the schema. Resolvers without matching schema fields are silently ignored. Conversely, schema fields without resolvers return `null`.
+## Related skills
 
-**Fix**: Always define the schema first, then implement matching resolvers. Keep resolver keys identical to schema field names:
-
-```typescript
-// Schema defines: reviews, review, createReview
-// Resolvers must use the same names:
-export default new Service({
-  graphql: {
-    resolvers: {
-      Query: {
-        reviews: reviewsResolver,      // matches schema
-        review: reviewResolver,        // matches schema
-      },
-      Mutation: {
-        createReview: createResolver,  // matches schema
-      },
-    },
-  },
-})
-```
-
----
-
-### Anti-Pattern: Querying External APIs Directly in Resolvers
-
-**What happens**: Developers use `fetch()` or `axios` directly inside resolver functions to call VTEX Commerce APIs or external services.
-
-**Why it fails**: This bypasses the `@vtex/api` client system, losing caching, retries, metrics, and authentication. See the vtex-io-service-apps skill for details on why `ctx.clients` is mandatory.
-
-**Fix**: Always use `ctx.clients` in resolvers. Create custom clients for any external service:
-
-```typescript
-// CORRECT: Using ctx.clients in a resolver
-export const queries = {
-  productDetails: async (_root: unknown, args: { id: string }, ctx: Context) => {
-    return ctx.clients.catalog.getProduct(args.id)
-  },
-}
-```
-
----
-
-### Anti-Pattern: Missing @auth on Mutation Endpoints
-
-**What happens**: Developers create mutation endpoints (create, update, delete) without the `@auth` directive.
-
-**Why it fails**: Without `@auth`, any anonymous user can call the mutation. This means anyone can create, modify, or delete data without authentication — a critical security vulnerability.
-
-**Fix**: Always add `@auth` to mutations and to queries that return sensitive or user-specific data:
-
-```graphql
-type Mutation {
-  createReview(input: ReviewInput!): Review @auth
-  updateReview(id: ID!, input: ReviewInput!): Review @auth
-  deleteReview(id: ID!): Boolean @auth
-}
-```
+- [`vtex-io-service-apps`](../vtex-io-service-apps/skill.md) — Service app fundamentals needed for all GraphQL resolvers
+- [`vtex-io-app-structure`](../vtex-io-app-structure/skill.md) — Manifest and builder configuration that GraphQL depends on
+- [`vtex-io-masterdata`](../vtex-io-masterdata/skill.md) — MasterData integration commonly used as a data source in resolvers
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [GraphQL in VTEX IO](https://developers.vtex.com/docs/guides/graphql-in-vtex-io) — Overview of GraphQL usage in the VTEX IO platform
 - [GraphQL Builder](https://developers.vtex.com/docs/guides/vtex-io-documentation-graphql-builder) — Builder reference for schema processing and directory structure
 - [Developing a GraphQL API in Service Apps](https://developers.vtex.com/docs/guides/developing-a-graphql-api-in-service-apps) — Step-by-step tutorial for building GraphQL APIs
 - [Integrating an App with a GraphQL API](https://developers.vtex.com/docs/guides/integrating-an-app-with-a-graphql-api) — How to consume GraphQL APIs from other VTEX IO apps
+- [GraphQL authorization in IO apps](https://developers.vtex.com/docs/guides/graphql-authorization-in-io-apps) — How to implement and use the `@auth` directive for protected GraphQL operations
+- [Implementing cache in GraphQL APIs for IO apps](https://developers.vtex.com/docs/guides/implementing-cache-in-graphql-apis-for-io-apps) — How to implement and use the `@cacheControl` directive for GraphQL operations
 - [Clients](https://developers.vtex.com/docs/guides/vtex-io-documentation-clients) — How to use ctx.clients in resolvers for data access
 
 ---
@@ -1058,41 +857,31 @@ type Mutation {
 
 # MasterData v2 Integration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Integrating Master Data v2 with VTEX IO apps — defining data entities with JSON Schemas via the `masterdata` builder, performing CRUD operations through the MasterDataClient (`ctx.clients.masterdata`), configuring triggers for automated actions, using search and scroll for data retrieval, and managing schema lifecycle to avoid the 60-schema-per-entity limit.
+Use this skill when your VTEX IO app needs to store custom data (reviews, wishlists, form submissions, configuration records), query or filter that data, or set up automated workflows triggered by data changes.
 
-**When to use it**: When your VTEX IO app needs to store custom data (reviews, wishlists, form submissions, configuration records), query or filter that data, or set up automated workflows triggered by data changes.
+- Defining data entities and JSON Schemas using the `masterdata` builder
+- Performing CRUD operations through MasterDataClient (`ctx.clients.masterdata`)
+- Configuring search, scroll, and indexing for efficient data retrieval
+- Setting up Master Data triggers for automated workflows
+- Managing schema lifecycle to avoid the 60-schema limit
 
-**What you'll learn**:
-- How to define data entities and JSON Schemas using the `masterdata` builder
-- How to perform CRUD operations through MasterDataClient with typed documents
-- How to configure search, scroll, and indexing for efficient data retrieval
-- How to set up Master Data triggers for automated workflows
+Do not use this skill for:
+- General backend service patterns (use `vtex-io-service-apps` instead)
+- GraphQL schema definitions (use `vtex-io-graphql-api` instead)
+- Manifest and builder configuration (use `vtex-io-app-structure` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- A **data entity** is a named collection of documents (analogous to a database table). A **JSON Schema** defines structure, validation, and indexing.
+- When using the `masterdata` builder, entities are defined by folder structure: `masterdata/{entityName}/schema.json`. The builder creates entities named `{vendor}_{appName}_{entityName}`.
+- Use `ctx.clients.masterdata` or `masterDataFor` from `@vtex/clients` for all CRUD operations — never direct REST calls.
+- All fields used in `where` clauses MUST be declared in the schema's `v-indexed` array for efficient querying.
+- Use `searchDocuments` for bounded result sets (known small size, max page size 100). Use `scrollDocuments` for large/unbounded result sets.
+- The `masterdata` builder creates a new schema per app version. Clean up unused schemas to avoid the 60-schema-per-entity hard limit.
 
-### Concept 1: Data Entities and JSON Schemas
-
-A **data entity** is a named collection of documents in Master Data (analogous to a database table). Each document is a JSON object. A **JSON Schema** defines the structure, validation rules, and indexing for documents in a data entity.
-
-When using the `masterdata` builder, entities are defined by folder structure:
-
-```text
-masterdata/
-├── reviews/
-│   └── schema.json       # JSON Schema for the "reviews" entity
-└── wishlists/
-    └── schema.json       # JSON Schema for the "wishlists" entity
-```
-
-The builder creates entities named `{vendor}_{appName}_{entityName}` (e.g., `mycompany_reviewapp_reviews`).
-
-### Concept 2: MasterDataClient
-
-The `MasterDataClient` is available at `ctx.clients.masterdata` in every VTEX IO service app that uses the `@vtex/api` package. It provides typed methods for all CRUD operations:
+MasterDataClient methods:
 
 | Method | Description |
 |--------|-------------|
@@ -1106,14 +895,8 @@ The `MasterDataClient` is available at `ctx.clients.masterdata` in every VTEX IO
 | `searchDocuments` | Search with filters, pagination, and field selection |
 | `searchDocumentsWithPaginationInfo` | Search with total count metadata |
 | `scrollDocuments` | Iterate over large result sets |
-| `getSchema` | Retrieve a schema definition |
-| `createOrUpdateSchema` | Save a schema to a data entity |
 
-### Concept 3: Indexing and Search
-
-Master Data v2 indexes fields declared in the JSON Schema for efficient querying. To make a field searchable, it must be declared in the schema with `v-indexed: true` or listed in the schema's index configuration.
-
-Search uses a `where` clause syntax:
+Search `where` clause syntax:
 
 ```text
 where: "productId=12345 AND approved=true"
@@ -1121,43 +904,7 @@ where: "rating>3"
 where: "createdAt between 2025-01-01 AND 2025-12-31"
 ```
 
-For large datasets, use `scrollDocuments` instead of `searchDocuments` to avoid timeout issues and paginate through all results.
-
-### Concept 4: Triggers
-
-Master Data v2 triggers execute automated actions when documents are created, updated, or deleted. Triggers can send emails, call HTTP webhooks, or execute custom actions. In the `masterdata` builder, triggers are defined in JSON files:
-
-```text
-masterdata/
-└── reviews/
-    ├── schema.json
-    └── triggers/
-        └── notify-on-review.json
-```
-
-Trigger configuration:
-
-```json
-{
-  "name": "notify-on-new-review",
-  "active": true,
-  "condition": "status=approved",
-  "action": {
-    "type": "http",
-    "uri": "https://myaccount.myvtex.com/_v/review-notifications",
-    "method": "POST",
-    "headers": {
-      "Content-Type": "application/json"
-    }
-  },
-  "retry": {
-    "times": 3,
-    "delay": { "addMinutes": 5 }
-  }
-}
-```
-
-**Architecture/Data Flow**:
+Architecture:
 
 ```text
 VTEX IO App (node builder)
@@ -1180,19 +927,22 @@ VTEX IO App (node builder)
       Master Data v2 (reads indexed fields for efficient queries)
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use MasterDataClient — Never Direct REST Calls
 
-**Rule**: All Master Data operations in VTEX IO apps MUST go through the MasterDataClient (`ctx.clients.masterdata`) or the `masterDataFor` factory from `@vtex/clients`. You MUST NOT make direct REST calls to `/api/dataentities/` endpoints.
+All Master Data operations in VTEX IO apps MUST go through the MasterDataClient (`ctx.clients.masterdata`) or the `masterDataFor` factory from `@vtex/clients`. You MUST NOT make direct REST calls to `/api/dataentities/` endpoints.
 
-**Why**: The MasterDataClient handles authentication token injection, request routing, retry logic, caching, and proper error handling. Direct REST calls bypass all of these, requiring you to manually manage auth headers, handle pagination, and implement retry logic. The client also provides TypeScript types and consistent error formatting.
+**Why this matters**
 
-**Detection**: If you see direct HTTP calls to URLs matching `/api/dataentities/`, `api.vtex.com/api/dataentities`, or raw fetch/axios calls targeting Master Data endpoints, warn the developer to use `ctx.clients.masterdata` instead.
+The MasterDataClient handles authentication token injection, request routing, retry logic, caching, and proper error handling. Direct REST calls bypass all of these, requiring manual auth headers, pagination, and retry logic. When the VTEX auth token format changes, direct calls break while the client handles it transparently.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see direct HTTP calls to URLs matching `/api/dataentities/`, `api.vtex.com/api/dataentities`, or raw fetch/axios calls targeting Master Data endpoints, warn the developer to use `ctx.clients.masterdata` instead.
+
+**Correct**
+
 ```typescript
 // Using MasterDataClient through ctx.clients
 export async function getReview(ctx: Context, next: () => Promise<void>) {
@@ -1210,7 +960,8 @@ export async function getReview(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Direct REST call to Master Data — bypasses client infrastructure
 import axios from 'axios'
@@ -1239,15 +990,19 @@ export async function getReview(ctx: Context, next: () => Promise<void>) {
 
 ### Constraint: Define JSON Schemas for All Data Entities
 
-**Rule**: Every data entity your app uses MUST have a corresponding JSON Schema, either via the `masterdata` builder (recommended) or created via the Master Data API before the app is deployed.
+Every data entity your app uses MUST have a corresponding JSON Schema, either via the `masterdata` builder (recommended) or created via the Master Data API before the app is deployed.
 
-**Why**: Without a schema, Master Data stores documents as unstructured JSON. This means no field validation, no indexing (making search extremely slow on large datasets), no type safety, and no trigger support. Queries on unindexed fields perform full scans, which can time out or hit rate limits.
+**Why this matters**
 
-**Detection**: If the app creates or searches documents in a data entity but no JSON Schema exists for that entity (either in the `masterdata/` builder directory or via API), warn the developer to define a schema.
+Without a schema, Master Data stores documents as unstructured JSON. This means no field validation, no indexing (making search extremely slow on large datasets), no type safety, and no trigger support. Queries on unindexed fields perform full scans, which can time out or hit rate limits.
 
-✅ **CORRECT**:
+**Detection**
+
+If the app creates or searches documents in a data entity but no JSON Schema exists for that entity (either in the `masterdata/` builder directory or via API), warn the developer to define a schema.
+
+**Correct**
+
 ```json
-// masterdata/reviews/schema.json
 {
   "$schema": "http://json-schema.org/schema#",
   "title": "review-schema-v1",
@@ -1286,7 +1041,8 @@ export async function getReview(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // Saving documents without any schema — no validation, no indexing
 await ctx.clients.masterdata.createDocument({
@@ -1311,13 +1067,18 @@ await ctx.clients.masterdata.searchDocuments({
 
 ### Constraint: Manage Schema Versions to Avoid the 60-Schema Limit
 
-**Rule**: Master Data v2 data entities have a limit of 60 schemas per entity. When using the `masterdata` builder, each app version linked or installed creates a new schema. You MUST delete unused schemas regularly.
+Master Data v2 data entities have a limit of 60 schemas per entity. When using the `masterdata` builder, each app version linked or installed creates a new schema. You MUST delete unused schemas regularly.
 
-**Why**: Once the 60-schema limit is reached, the `masterdata` builder cannot create new schemas, and linking or installing new app versions will fail. This is a hard platform limit that cannot be increased.
+**Why this matters**
 
-**Detection**: If the app has been through many link/install cycles, warn the developer to check and clean up old schemas using the [Delete Schema API](https://developers.vtex.com/docs/api-reference/master-data-api-v2#delete-/api/dataentities/-dataEntityName-/schemas/-schemaName-).
+Once the 60-schema limit is reached, the `masterdata` builder cannot create new schemas, and linking or installing new app versions will fail. This is a hard platform limit that cannot be increased.
 
-✅ **CORRECT**:
+**Detection**
+
+If the app has been through many link/install cycles, warn the developer to check and clean up old schemas using the Delete Schema API.
+
+**Correct**
+
 ```bash
 # Periodically clean up unused schemas
 # List schemas for the entity
@@ -1331,22 +1092,20 @@ curl -X DELETE "https://{account}.vtexcommercestable.com.br/api/dataentities/rev
   -H "X-VTEX-API-AppToken: {appToken}"
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```text
-# Never cleaning up schemas during development.
-# After 60 link cycles, the builder fails:
-# "Error: Maximum number of schemas reached for entity 'reviews'"
-# The app cannot be linked or installed until old schemas are deleted.
+Never cleaning up schemas during development.
+After 60 link cycles, the builder fails:
+"Error: Maximum number of schemas reached for entity 'reviews'"
+The app cannot be linked or installed until old schemas are deleted.
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to integrate Master Data v2 in a VTEX IO app.**
-
-### Step 1: Add the masterdata Builder and Policies
+Add the masterdata builder and policies:
 
 ```json
-// manifest.json
 {
   "builders": {
     "node": "7.x",
@@ -1368,10 +1127,9 @@ curl -X DELETE "https://{account}.vtexcommercestable.com.br/api/dataentities/rev
 }
 ```
 
-### Step 2: Define Data Entity Schemas
+Define data entity schemas:
 
 ```json
-// masterdata/reviews/schema.json
 {
   "$schema": "http://json-schema.org/schema#",
   "title": "review-schema-v1",
@@ -1415,24 +1173,13 @@ curl -X DELETE "https://{account}.vtexcommercestable.com.br/api/dataentities/rev
 }
 ```
 
-### Step 3: Generate TypeScript Typings
-
-```bash
-# At the root of your project
-vtex setup -i
-
-# This generates types based on your schema that you can import:
-# import type { Review } from 'myvendor.myapp'
-```
-
-### Step 4: Set Up the Client with masterDataFor
+Set up the client with `masterDataFor`:
 
 ```typescript
 // node/clients/index.ts
 import { IOClients } from '@vtex/api'
 import { masterDataFor } from '@vtex/clients'
 
-// Import the generated type from the masterdata builder
 interface Review {
   id: string
   productId: string
@@ -1452,7 +1199,7 @@ export class Clients extends IOClients {
 }
 ```
 
-### Step 5: Implement CRUD Operations
+Implement CRUD operations:
 
 ```typescript
 // node/resolvers/reviews.ts
@@ -1513,10 +1260,9 @@ export const mutations = {
 }
 ```
 
-### Step 6: Configure Triggers (Optional)
+Configure triggers (optional):
 
 ```json
-// masterdata/reviews/triggers/notify-moderator.json
 {
   "name": "notify-moderator-on-new-review",
   "active": true,
@@ -1535,9 +1281,7 @@ export const mutations = {
 }
 ```
 
-### Complete Example
-
-Full CRUD service for product reviews with Master Data v2:
+Wire into Service:
 
 ```typescript
 // node/index.ts
@@ -1566,87 +1310,24 @@ export default new Service<Clients, RecorderState, ParamsContext>({
 })
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Direct REST calls to /api/dataentities/**: Using `axios` or `fetch` to call Master Data endpoints bypasses the client infrastructure — no auth, no caching, no retries. Use `ctx.clients.masterdata` or `masterDataFor` instead.
+- **Searching without indexed fields**: Queries on non-indexed fields trigger full document scans. For large datasets, this causes timeouts and rate limit errors. Ensure all `where` clause fields are in the schema's `v-indexed` array.
+- **Not paginating search results**: Master Data v2 has a maximum page size of 100 documents. Requesting more silently returns only up to the limit. Use proper pagination or `scrollDocuments` for large result sets.
+- **Ignoring the 60-schema limit**: Each app version linked/installed creates a new schema. After 60 link cycles, the builder fails. Periodically clean up unused schemas via the Delete Schema API.
 
-### Anti-Pattern: Direct REST Calls to /api/dataentities/
+## Review checklist
 
-**What happens**: Developers use `axios` or `fetch` to call Master Data v2 REST endpoints directly, bypassing the MasterDataClient.
-
-**Why it fails**: Direct calls require manual auth header management, manual pagination, no built-in retry logic, and no caching. When the VTEX auth token format changes, direct calls break while the client handles it transparently.
-
-**Fix**: Use `ctx.clients.masterdata` or `masterDataFor` from `@vtex/clients`:
-
-```typescript
-// Instead of direct API calls:
-const reviews = await ctx.clients.reviews.search(
-  { page: 1, pageSize: 10 },
-  ['id', 'productId', 'rating', 'title'],
-  '',
-  `productId=${productId}`
-)
-```
-
----
-
-### Anti-Pattern: Searching Without Indexed Fields
-
-**What happens**: Developers query Master Data using `where` clauses on fields that are not indexed in the JSON Schema.
-
-**Why it fails**: Queries on non-indexed fields trigger full document scans. For data entities with thousands of documents, this causes timeouts and rate limit errors. The query may return partial results or fail entirely.
-
-**Fix**: Ensure all fields used in `where` clauses are declared in the schema's `v-indexed` array:
-
-```json
-{
-  "v-indexed": ["productId", "author", "approved", "rating", "createdAt"]
-}
-```
-
-Then queries on these fields will use the index:
-
-```typescript
-// Fast — productId and approved are indexed
-await ctx.clients.reviews.search(
-  { page: 1, pageSize: 10 },
-  ['id', 'rating', 'title'],
-  '',
-  'productId=12345 AND approved=true'
-)
-```
-
----
-
-### Anti-Pattern: Not Paginating Search Results
-
-**What happens**: Developers call `searchDocuments` requesting all documents at once (e.g., `pageSize: 1000`) instead of paginating.
-
-**Why it fails**: Master Data v2 has a maximum page size of 100 documents. Requesting more silently returns only up to the limit. For large datasets, use `scrollDocuments` to iterate through all results without hitting API limits.
-
-**Fix**: Use proper pagination or scroll for large result sets:
-
-```typescript
-// For bounded result sets (known small size)
-const reviews = await ctx.clients.reviews.search(
-  { page: 1, pageSize: 50 },
-  ['id', 'rating', 'title'],
-  '',
-  `productId=${productId}`
-)
-
-// For large/unbounded result sets — use scroll
-const allReviews = await ctx.clients.masterdata.scrollDocuments<Review>({
-  dataEntity: 'reviews',
-  fields: ['id', 'productId', 'rating'],
-  where: 'approved=true',
-  size: 100,  // Batch size per scroll request
-})
-```
+- [ ] Is the `masterdata` builder declared in `manifest.json`?
+- [ ] Do all data entities have JSON Schemas with proper field definitions?
+- [ ] Are all `where` clause fields declared in `v-indexed`?
+- [ ] Are CRUD operations using `ctx.clients.masterdata` or `masterDataFor` (no direct REST calls)?
+- [ ] Is pagination properly handled (max 100 per page, scroll for large sets)?
+- [ ] Is there a plan for schema cleanup to avoid the 60-schema limit?
+- [ ] Are required policies (`outbound-access`, `ADMIN_DS`) declared in the manifest?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Creating a Master Data v2 CRUD App](https://developers.vtex.com/docs/guides/create-master-data-crud-app) — Complete guide for building Master Data apps with the masterdata builder
 - [Working with JSON Schemas in Master Data v2](https://developers.vtex.com/docs/guides/working-with-json-schemas-in-master-data-v2) — Schema structure, validation, and indexing configuration
@@ -1663,116 +1344,33 @@ const allReviews = await ctx.clients.masterdata.scrollDocuments<Review>({
 
 # Frontend React Components & Hooks
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Building VTEX IO frontend apps using the `react` builder — creating React components that integrate with Store Framework as theme blocks, configuring `interfaces.json` to map blocks to components, setting up `contentSchemas.json` for Site Editor customization, using VTEX Styleguide for admin apps, and applying `css-handles` for safe storefront styling.
+Use this skill when building VTEX IO frontend apps using the `react` builder — creating React components that integrate with Store Framework as theme blocks, configuring `interfaces.json`, setting up `contentSchemas.json` for Site Editor, and applying styling patterns.
 
-**When to use it**: When developing custom storefront components (product displays, forms, banners), admin panel interfaces, pixel/tracking apps, or any VTEX IO app that renders UI with React.
+- Creating custom storefront components (product displays, forms, banners)
+- Building admin panel interfaces with VTEX Styleguide
+- Registering components as Store Framework blocks
+- Exposing component props in Site Editor via `contentSchemas.json`
+- Applying `css-handles` for safe storefront styling
 
-**What you'll learn**:
-- How to create React components in the `/react` directory and export them correctly
-- How to register components as Store Framework blocks via `interfaces.json`
-- How to expose component props in Site Editor via `contentSchemas.json`
-- How to use VTEX Styleguide for admin UIs and css-handles for storefront styling
+Do not use this skill for:
+- Backend service implementation (use `vtex-io-service-apps` instead)
+- GraphQL schema and resolver development (use `vtex-io-graphql-api` instead)
+- Manifest and builder configuration (use `vtex-io-app-structure` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Every visible storefront element is a **block**. Blocks are declared in theme JSON and map to React components via **interfaces**.
+- `interfaces.json` (in `/store`) maps block names to React component files: `"component"` is the file name in `/react` (without extension), `"allowed"` lists child blocks, `"composition"` controls how children work (`"children"` or `"blocks"`).
+- Each exported component MUST have a root-level file in `/react` that re-exports it. The builder resolves `"component": "ProductReviews"` to `react/ProductReviews.tsx`.
+- For **storefront** components, use `vtex.css-handles` for styling (not inline styles, not global CSS).
+- For **admin** components, use `vtex.styleguide` — the official VTEX Admin component library. No third-party UI libraries.
+- Use `contentSchemas.json` in `/store` to make component props editable in Site Editor (JSON Schema format).
+- Use `react-intl` and the `messages` builder for i18n — never hardcode user-facing strings.
+- Fetch data via GraphQL queries (`useQuery` from `react-apollo`), never via direct API calls from the browser.
 
-### Concept 1: Store Framework Blocks and Interfaces
-
-In VTEX Store Framework, every visible element is a **block**. Blocks are declared in JSON theme files and map to React components via an **interface**. The `interfaces.json` file (in the `/store` directory) establishes this mapping:
-
-```json
-{
-  "product-reviews": {
-    "component": "ProductReviews",
-    "allowed": ["product-review-item"],
-    "composition": "children"
-  }
-}
-```
-
-- `component`: Name of the React component file in `/react` (without extension)
-- `allowed`: Which child blocks can be nested inside this block
-- `composition`: How children are composed — `"children"` (explicit), `"blocks"` (implicit)
-- `render`: Rendering strategy — `"client"` (default), `"server"`, `"lazy"`
-
-### Concept 2: React Directory Structure
-
-The `/react` directory contains your React components. Each exported component must have a corresponding file at the root of `/react` that re-exports it:
-
-```text
-react/
-├── ProductReviews.tsx          # Root export file (re-exports the component)
-├── components/
-│   ├── ProductReviews/
-│   │   ├── index.tsx           # Actual component implementation
-│   │   ├── ReviewItem.tsx
-│   │   └── StarRating.tsx
-│   └── shared/
-│       └── LoadingSpinner.tsx
-├── hooks/
-│   └── useReviews.ts
-├── typings/
-│   └── vtex.d.ts
-└── package.json
-```
-
-The root-level file (`react/ProductReviews.tsx`) is what the store builder resolves when it reads `"component": "ProductReviews"` from `interfaces.json`.
-
-### Concept 3: Site Editor Integration
-
-Site Editor allows store administrators to edit component properties through the VTEX Admin without touching code. To make your component editable, define a `contentSchemas.json` file in the `/store` directory:
-
-```json
-{
-  "definitions": {
-    "ProductReviews": {
-      "type": "object",
-      "properties": {
-        "title": {
-          "type": "string",
-          "title": "Section Title",
-          "default": "Customer Reviews"
-        },
-        "showAverage": {
-          "type": "boolean",
-          "title": "Show average rating",
-          "default": true
-        },
-        "maxReviews": {
-          "type": "number",
-          "title": "Maximum reviews to display",
-          "default": 10,
-          "enum": [5, 10, 20, 50]
-        }
-      }
-    }
-  }
-}
-```
-
-These schemas use JSON Schema format and map directly to the component's props.
-
-### Concept 4: CSS Handles and VTEX Styleguide
-
-For **storefront** components, use `vtex.css-handles` to expose CSS class names that store theme developers can customize:
-
-```typescript
-import { useCssHandles } from 'vtex.css-handles'
-
-const CSS_HANDLES = ['container', 'title', 'reviewList', 'reviewItem'] as const
-
-function ProductReviews() {
-  const handles = useCssHandles(CSS_HANDLES)
-  return <div className={handles.container}>...</div>
-}
-```
-
-For **admin** components, use [VTEX Styleguide](https://styleguide.vtex.com/) — the official component library for VTEX Admin UIs. It provides buttons, tables, modals, inputs, and other pre-built components that follow VTEX design standards.
-
-**Architecture/Data Flow**:
+Architecture:
 
 ```text
 Store Theme (JSON blocks)
@@ -1789,21 +1387,23 @@ react/ProductReviews.tsx → React component renders
         └── useProduct() / useOrderForm() → Store Framework context hooks
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Declare Interfaces for All Storefront Blocks
 
-**Rule**: Every React component that should be usable as a Store Framework block MUST have a corresponding entry in `store/interfaces.json`. Without the interface declaration, the block cannot be referenced in theme JSON files.
+Every React component that should be usable as a Store Framework block MUST have a corresponding entry in `store/interfaces.json`. Without the interface declaration, the block cannot be referenced in theme JSON files.
 
-**Why**: The store builder resolves block names to React components through `interfaces.json`. If a component exists in `/react` but has no interface, it is invisible to Store Framework. Theme developers cannot use it in their store configurations, and it will not render on the storefront.
+**Why this matters**
 
-**Detection**: If a React component in `/react` is intended for storefront use but has no matching entry in `store/interfaces.json`, warn the developer. The component will compile but never render.
+The store builder resolves block names to React components through `interfaces.json`. If a component has no interface, it is invisible to Store Framework and will not render on the storefront.
 
-✅ **CORRECT**:
+**Detection**
+
+If a React component in `/react` is intended for storefront use but has no matching entry in `store/interfaces.json`, warn the developer. The component will compile but never render.
+
+**Correct**
+
 ```json
-// store/interfaces.json
 {
   "product-reviews": {
     "component": "ProductReviews",
@@ -1823,7 +1423,8 @@ import ProductReviews from './components/ProductReviews'
 export default ProductReviews
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```tsx
 // react/ProductReviews.tsx exists but NO store/interfaces.json entry
 // The component compiles fine but cannot be used in any theme.
@@ -1838,13 +1439,18 @@ export default ProductReviews
 
 ### Constraint: Use VTEX Styleguide for Admin UIs
 
-**Rule**: Admin panel components (apps using the `admin` builder) MUST use VTEX Styleguide (`vtex.styleguide`) for UI elements. You MUST NOT use third-party UI libraries like Material UI (`@material-ui`), Chakra UI (`@chakra-ui/react`), or Ant Design (`antd`) in admin apps.
+Admin panel components (apps using the `admin` builder) MUST use VTEX Styleguide (`vtex.styleguide`) for UI elements. You MUST NOT use third-party UI libraries like Material UI, Chakra UI, or Ant Design in admin apps.
 
-**Why**: VTEX Admin has a consistent design language enforced by Styleguide. Third-party UI libraries produce inconsistent visuals, may conflict with the Admin's global CSS, and add unnecessary bundle size. Apps submitted to the VTEX App Store with non-Styleguide admin UIs will fail review.
+**Why this matters**
 
-**Detection**: If you see imports from `@material-ui`, `@chakra-ui/react`, `@chakra-ui`, `antd`, or `@ant-design` in an admin app, warn the developer to use `vtex.styleguide` instead.
+VTEX Admin has a consistent design language enforced by Styleguide. Third-party UI libraries produce inconsistent visuals, may conflict with the Admin's global CSS, and add unnecessary bundle size. Apps submitted to the VTEX App Store with non-Styleguide admin UIs will fail review.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see imports from `@material-ui`, `@chakra-ui/react`, `@chakra-ui`, `antd`, or `@ant-design` in an admin app, warn the developer to use `vtex.styleguide` instead.
+
+**Correct**
+
 ```tsx
 // react/admin/ReviewModeration.tsx
 import React, { useState } from 'react'
@@ -1901,7 +1507,8 @@ function ReviewModeration() {
 export default ReviewModeration
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```tsx
 // react/admin/ReviewModeration.tsx
 import React from 'react'
@@ -1925,13 +1532,18 @@ function ReviewModeration() {
 
 ### Constraint: Export Components from react/ Root Level
 
-**Rule**: Every Store Framework block component MUST have a root-level export file in the `/react` directory that matches the `component` value in `interfaces.json`. The actual implementation can live in subdirectories, but the root file must exist.
+Every Store Framework block component MUST have a root-level export file in the `/react` directory that matches the `component` value in `interfaces.json`. The actual implementation can live in subdirectories, but the root file must exist.
 
-**Why**: The react builder resolves components by looking for files at the root of `/react`. If `interfaces.json` declares `"component": "ProductReviews"`, the builder looks for `react/ProductReviews.tsx` (or `.ts`, `.js`, `.jsx`). Without this root export file, the component will not be found and the block will fail to render.
+**Why this matters**
 
-**Detection**: If `interfaces.json` references a component name that does not have a matching file at the root of `/react`, STOP and create the export file.
+The react builder resolves components by looking for files at the root of `/react`. If `interfaces.json` declares `"component": "ProductReviews"`, the builder looks for `react/ProductReviews.tsx`. Without this root export file, the component will not be found and the block will fail to render.
 
-✅ **CORRECT**:
+**Detection**
+
+If `interfaces.json` references a component name that does not have a matching file at the root of `/react`, STOP and create the export file.
+
+**Correct**
+
 ```tsx
 // react/ProductReviews.tsx — root-level export file
 import ProductReviews from './components/ProductReviews/index'
@@ -1964,21 +1576,18 @@ function ProductReviews({ title, maxReviews }: Props) {
 export default ProductReviews
 ```
 
-❌ **WRONG**:
-```tsx
-// react/components/ProductReviews/index.tsx exists but
-// react/ProductReviews.tsx does NOT exist.
-// The builder cannot find the component.
-// Error: "Could not find component ProductReviews"
+**Wrong**
+
+```text
+react/components/ProductReviews/index.tsx exists but
+react/ProductReviews.tsx does NOT exist.
+The builder cannot find the component.
+Error: "Could not find component ProductReviews"
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to build a VTEX IO React storefront component.**
-
-### Step 1: Create the React Component
-
-Build your component inside a subdirectory for organization:
+Create the React component inside a subdirectory:
 
 ```tsx
 // react/components/ProductReviews/index.tsx
@@ -2058,7 +1667,7 @@ function ProductReviews({
 export default ProductReviews
 ```
 
-### Step 2: Create the Root Export File
+Root export file:
 
 ```tsx
 // react/ProductReviews.tsx
@@ -2067,10 +1676,9 @@ import ProductReviews from './components/ProductReviews'
 export default ProductReviews
 ```
 
-### Step 3: Define the Block Interface
+Block interface:
 
 ```json
-// store/interfaces.json
 {
   "product-reviews": {
     "component": "ProductReviews",
@@ -2081,10 +1689,9 @@ export default ProductReviews
 }
 ```
 
-### Step 4: Add Site Editor Schema
+Site Editor schema:
 
 ```json
-// store/contentSchemas.json
 {
   "definitions": {
     "ProductReviews": {
@@ -2113,12 +1720,9 @@ export default ProductReviews
 }
 ```
 
-### Complete Example
-
 Using the component in a Store Framework theme:
 
 ```json
-// store-theme blocks.json
 {
   "store.product": {
     "children": [
@@ -2139,89 +1743,24 @@ Using the component in a Store Framework theme:
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Importing third-party UI libraries for admin apps**: Using `@material-ui/core`, `@chakra-ui/react`, or `antd` conflicts with VTEX Admin's global CSS, produces inconsistent visuals, and will fail App Store review. Use `vtex.styleguide` instead.
+- **Directly calling APIs from React components**: Using `fetch()` or `axios` exposes authentication tokens to the client and bypasses CORS restrictions. Use GraphQL queries that resolve server-side via `useQuery` from `react-apollo`.
+- **Hardcoded strings without i18n**: Components with hardcoded strings only work in one language. Use the `messages` builder and `react-intl` for internationalization.
+- **Missing root-level export file**: If `interfaces.json` references `"component": "ProductReviews"` but `react/ProductReviews.tsx` doesn't exist, the block silently fails to render.
 
-### Anti-Pattern: Importing Third-Party UI Libraries for Admin Apps
+## Review checklist
 
-**What happens**: Developers install `@material-ui/core`, `@chakra-ui/react`, or `antd` to build admin panels instead of using VTEX Styleguide.
-
-**Why it fails**: Third-party UI libraries conflict with the VTEX Admin's global CSS, produce an inconsistent look and feel, significantly increase bundle size, and will cause the app to fail VTEX App Store review.
-
-**Fix**: Use `vtex.styleguide` components. Declare the dependency in `manifest.json`:
-
-```json
-{
-  "dependencies": {
-    "vtex.styleguide": "9.x"
-  }
-}
-```
-
-Then import components directly:
-
-```tsx
-import { Button, Table, Modal, Input, Layout, PageHeader } from 'vtex.styleguide'
-```
-
----
-
-### Anti-Pattern: Directly Calling APIs from React Components
-
-**What happens**: Developers use `fetch()` or `axios` inside React components to call VTEX Commerce APIs directly from the browser.
-
-**Why it fails**: Browser-side API calls expose authentication tokens to the client, bypass CORS restrictions, and cannot use server-side caching. VTEX Commerce APIs require server-side authentication that is not available in the browser context.
-
-**Fix**: Use GraphQL queries that resolve on the server side. Create a GraphQL schema in your app's `/graphql` directory with resolvers in `/node/resolvers` that use `ctx.clients` to access VTEX APIs:
-
-```tsx
-// Instead of fetch() in the component:
-import { useQuery } from 'react-apollo'
-import GET_REVIEWS from '../graphql/getReviews.graphql'
-
-function ProductReviews() {
-  const { data, loading } = useQuery(GET_REVIEWS, {
-    variables: { productId: '123' },
-  })
-  // ...
-}
-```
-
----
-
-### Anti-Pattern: Hardcoded Strings Without i18n
-
-**What happens**: Developers hardcode user-facing strings in React components instead of using the `messages` builder for internationalization.
-
-**Why it fails**: The component will only work in one language. VTEX stores are often multi-locale, and hardcoded strings cannot be translated by the platform's automatic translation system or overridden via Site Editor.
-
-**Fix**: Use the `messages` builder and `react-intl`:
-
-```tsx
-import { useIntl } from 'react-intl'
-
-function ProductReviews() {
-  const intl = useIntl()
-  const title = intl.formatMessage({ id: 'store/product-reviews.title' })
-  return <h2>{title}</h2>
-}
-```
-
-```json
-// messages/en.json
-{
-  "store/product-reviews.title": "Customer Reviews"
-}
-// messages/pt.json
-{
-  "store/product-reviews.title": "Avaliações de Clientes"
-}
-```
+- [ ] Does every storefront block have a matching entry in `store/interfaces.json`?
+- [ ] Does every `interfaces.json` component have a root-level export file in `/react`?
+- [ ] Are admin apps using `vtex.styleguide` (no third-party UI libraries)?
+- [ ] Are storefront components using `css-handles` for styling?
+- [ ] Is data fetched via GraphQL (`useQuery`), not direct API calls?
+- [ ] Are user-facing strings using `react-intl` and the `messages` builder?
+- [ ] Is `contentSchemas.json` defined for Site Editor-editable props?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Developing Custom Storefront Components](https://developers.vtex.com/docs/guides/vtex-io-documentation-developing-custom-storefront-components) — Guide for building Store Framework components
 - [Interfaces](https://developers.vtex.com/docs/guides/vtex-io-documentation-interface) — How interfaces map blocks to React components
@@ -2239,60 +1778,32 @@ function ProductReviews() {
 
 # Backend Service Apps & API Clients
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Building VTEX IO backend services using the `node` builder — the Service class, middleware pattern, client system (JanusClient, ExternalClient, MasterDataClient), IOClients registry, service.json route configuration, event handling, and the mandatory `ctx.clients` access pattern.
+Use this skill when developing a VTEX IO app that needs backend logic — REST API routes, GraphQL resolvers, event handlers, scheduled tasks, or integrations with VTEX Commerce APIs and external services.
 
-**When to use it**: When developing a VTEX IO app that needs backend logic — REST API routes, GraphQL resolvers, event handlers, scheduled tasks, or integrations with VTEX Commerce APIs and external services.
+- Building the Service entry point (`node/index.ts`) with typed context, clients, and state
+- Creating and registering custom clients extending JanusClient or ExternalClient
+- Using `ctx.clients` to access clients with built-in caching, retry, and metrics
+- Configuring routes and middleware chains in service.json
 
-**What you'll learn**:
-- How to structure the Service entry point with typed context, clients, and state
-- How to create and register custom clients extending JanusClient or ExternalClient
-- How to use `ctx.clients` to access clients with built-in caching, retry, and metrics
-- How to configure routes and middleware chains in service.json
+Do not use this skill for:
+- Manifest and builder configuration (use `vtex-io-app-structure` instead)
+- GraphQL schema definitions (use `vtex-io-graphql-api` instead)
+- React component development (use `vtex-io-react-apps` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- The Service class (`node/index.ts`) is the entry point for every VTEX IO backend app. It receives clients, routes (with middleware chains), GraphQL resolvers, and event handlers.
+- Every middleware, resolver, and event handler receives `ctx` with: `ctx.clients` (registered clients), `ctx.state` (mutable per-request state), `ctx.vtex` (auth tokens, account info), `ctx.body` (request/response body).
+- Use `JanusClient` for VTEX internal APIs (base URL: `https://{account}.vtexcommercestable.com.br`).
+- Use `ExternalClient` for non-VTEX APIs (any URL you specify).
+- Use `AppClient` for routes exposed by other VTEX IO apps.
+- Use `MasterDataClient` for Master Data v2 CRUD operations.
+- Register custom clients by extending `IOClients` — each client is lazily instantiated on first access via `this.getOrSet()`.
+- Keep clients as thin data-access wrappers. Put business logic in middlewares or service functions.
 
-### Concept 1: The Service Class
-
-The Service class is the entry point for every VTEX IO backend app (`node/index.ts`). It receives a configuration object defining clients, routes (with middleware chains), GraphQL resolvers, and event handlers. The Service class wires everything together and registers it with the VTEX IO runtime.
-
-```typescript
-import type { ParamsContext, RecorderState, ServiceContext } from '@vtex/api'
-import { Service } from '@vtex/api'
-
-export default new Service<Clients, RecorderState, ParamsContext>({
-  clients: {
-    implementation: Clients,
-    options: {
-      default: {
-        retries: 2,
-        timeout: 3000,
-      },
-    },
-  },
-  routes: { ... },
-  graphql: { resolvers: { ... } },
-  events: { ... },
-})
-```
-
-### Concept 2: Context, State, and Clients
-
-Every middleware, resolver, and event handler receives a `ctx` object of type `ServiceContext`. This context provides:
-
-- `ctx.clients` — Access to all registered clients (VTEX native + custom)
-- `ctx.state` — Mutable state shared across the middleware chain for a single request
-- `ctx.vtex` — Authentication tokens, account info, workspace, request metadata
-- `ctx.body` — Request/response body
-
-The generic type parameters `Service<Clients, State, Context>` allow full TypeScript type safety across your entire app.
-
-### Concept 3: Client Hierarchy
-
-VTEX IO provides a hierarchy of base client classes in `@vtex/api`:
+Client hierarchy:
 
 | Class | Use Case | Base URL |
 |-------|----------|----------|
@@ -2302,24 +1813,7 @@ VTEX IO provides a hierarchy of base client classes in `@vtex/api`:
 | `InfraClient` | Access VTEX IO infrastructure services | Internal |
 | `MasterDataClient` | Access Master Data v2 CRUD operations | VTEX API |
 
-All clients extend a common base that provides: disk/memory caching, automatic retries with exponential backoff, timeout configuration, native metrics collection, and billing tracking.
-
-### Concept 4: IOClients Registry
-
-Custom clients are registered by extending the `IOClients` class from `@vtex/api`. This class acts as a dependency injection container — each client is lazily instantiated on first access and reused across the request lifecycle.
-
-```typescript
-import { IOClients } from '@vtex/api'
-import { MyExternalClient } from './myExternalClient'
-
-export class Clients extends IOClients {
-  public get myExternal() {
-    return this.getOrSet('myExternal', MyExternalClient)
-  }
-}
-```
-
-**Architecture/Data Flow**:
+Architecture:
 
 ```text
 Request → VTEX IO Runtime → Service
@@ -2334,19 +1828,22 @@ Request → VTEX IO Runtime → Service
                     External Service / VTEX API
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Use @vtex/api Clients — Never Raw HTTP Libraries
 
-**Rule**: All HTTP communication from a VTEX IO service app MUST go through `@vtex/api` clients (JanusClient, ExternalClient, AppClient, or native clients from `@vtex/clients`). You MUST NOT use `axios`, `fetch`, `got`, `node-fetch`, or any other raw HTTP library.
+All HTTP communication from a VTEX IO service app MUST go through `@vtex/api` clients (JanusClient, ExternalClient, AppClient, or native clients from `@vtex/clients`). You MUST NOT use `axios`, `fetch`, `got`, `node-fetch`, or any other raw HTTP library.
 
-**Why**: VTEX IO clients provide automatic authentication header injection, built-in caching (disk and memory), retry with exponential backoff, timeout management, native metrics and billing tracking, and proper error handling. Raw HTTP libraries bypass all of these, leading to missing auth tokens, no caching, no retries, no metrics, and potential billing issues. Additionally, outbound traffic from VTEX IO is firewalled — only `@vtex/api` clients properly route through the infrastructure.
+**Why this matters**
 
-**Detection**: If you see `import axios from 'axios'`, `import fetch from 'node-fetch'`, `import got from 'got'`, `require('node-fetch')`, or any direct `fetch()` call in a VTEX IO service app, STOP. Replace with a proper client extending JanusClient or ExternalClient.
+VTEX IO clients provide automatic authentication header injection, built-in caching (disk and memory), retry with exponential backoff, timeout management, native metrics and billing tracking, and proper error handling. Raw HTTP libraries bypass all of these. Additionally, outbound traffic from VTEX IO is firewalled — only `@vtex/api` clients properly route through the infrastructure.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `import axios from 'axios'`, `import fetch from 'node-fetch'`, `import got from 'got'`, `require('node-fetch')`, or any direct `fetch()` call in a VTEX IO service app, STOP. Replace with a proper client extending JanusClient or ExternalClient.
+
+**Correct**
+
 ```typescript
 import type { InstanceOptions, IOContext } from '@vtex/api'
 import { ExternalClient } from '@vtex/api'
@@ -2370,7 +1867,8 @@ export class WeatherClient extends ExternalClient {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 import axios from 'axios'
 
@@ -2389,13 +1887,18 @@ export async function getForecast(city: string): Promise<Forecast> {
 
 ### Constraint: Access Clients via ctx.clients — Never Instantiate Directly
 
-**Rule**: Clients MUST always be accessed through `ctx.clients.{clientName}` in middlewares, resolvers, and event handlers. You MUST NOT instantiate client classes directly with `new`.
+Clients MUST always be accessed through `ctx.clients.{clientName}` in middlewares, resolvers, and event handlers. You MUST NOT instantiate client classes directly with `new`.
 
-**Why**: The IOClients registry manages client lifecycle, ensuring proper initialization with the current request's IOContext (account, workspace, auth tokens). Direct instantiation creates clients without authentication context, without caching configuration, and without connection to the metrics pipeline. It also prevents the runtime from managing memory and connection pooling.
+**Why this matters**
 
-**Detection**: If you see `new MyClient(...)` or `new ExternalClient(...)` inside a middleware or resolver, STOP. The client should be registered in the Clients class and accessed via `ctx.clients`.
+The IOClients registry manages client lifecycle, ensuring proper initialization with the current request's IOContext (account, workspace, auth tokens). Direct instantiation creates clients without authentication context, without caching configuration, and without connection to the metrics pipeline.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see `new MyClient(...)` or `new ExternalClient(...)` inside a middleware or resolver, STOP. The client should be registered in the Clients class and accessed via `ctx.clients`.
+
+**Correct**
+
 ```typescript
 // node/clients/index.ts
 import { IOClients } from '@vtex/api'
@@ -2417,7 +1920,8 @@ export async function getProduct(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```typescript
 // node/middlewares/getProduct.ts
 import { CatalogClient } from '../clients/catalogClient'
@@ -2436,13 +1940,18 @@ export async function getProduct(ctx: Context, next: () => Promise<void>) {
 
 ### Constraint: Avoid Monolithic Service Apps
 
-**Rule**: A single service app SHOULD NOT define more than 10 HTTP routes. If you need more, consider splitting into focused microservice apps.
+A single service app SHOULD NOT define more than 10 HTTP routes. If you need more, consider splitting into focused microservice apps.
 
-**Why**: VTEX IO apps run in containers with limited memory (max 512MB). A monolithic app with many routes increases memory usage, cold start time, and blast radius of failures. It also makes the app harder to version and deploy independently. The VTEX IO platform is designed for small, focused apps that compose together.
+**Why this matters**
 
-**Detection**: If `service.json` defines more than 10 routes, warn the developer to consider splitting the app into smaller services. This is a soft limit — there may be valid exceptions.
+VTEX IO apps run in containers with limited memory (max 512MB). A monolithic app with many routes increases memory usage, cold start time, and blast radius of failures. The VTEX IO platform is designed for small, focused apps that compose together.
 
-✅ **CORRECT**:
+**Detection**
+
+If `service.json` defines more than 10 routes, warn the developer to consider splitting the app into smaller services. This is a soft limit — there may be valid exceptions.
+
+**Correct**
+
 ```json
 {
   "memory": 256,
@@ -2456,7 +1965,8 @@ export async function getProduct(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "memory": 512,
@@ -2476,17 +1986,13 @@ export async function getProduct(ctx: Context, next: () => Promise<void>) {
     "route12": { "path": "/_v/api/inventory" }
   }
 }
-// 12 routes covering reviews, products, orders, users, categories,
-// brands, and inventory — this should be 3-4 separate apps.
 ```
 
-## Implementation Pattern
+12 routes covering reviews, products, orders, users, categories, brands, and inventory — this should be 3-4 separate apps.
 
-**The canonical, recommended way to build a VTEX IO service app.**
+## Preferred pattern
 
-### Step 1: Define Custom Clients
-
-Create clients extending the appropriate base class for each external service:
+Define custom clients:
 
 ```typescript
 // node/clients/catalogClient.ts
@@ -2518,9 +2024,7 @@ export class CatalogClient extends JanusClient {
 }
 ```
 
-### Step 2: Register Clients in IOClients
-
-Create the Clients class that registers all custom clients:
+Register clients in IOClients:
 
 ```typescript
 // node/clients/index.ts
@@ -2539,9 +2043,7 @@ export class Clients extends IOClients {
 }
 ```
 
-### Step 3: Create Middlewares
-
-Build middleware functions that use `ctx.clients` and `ctx.state`:
+Create middlewares using `ctx.clients` and `ctx.state`:
 
 ```typescript
 // node/middlewares/getReviews.ts
@@ -2573,7 +2075,7 @@ export async function getReviews(ctx: Context, next: () => Promise<void>) {
 }
 ```
 
-### Step 4: Wire Everything in the Service Entry Point
+Wire everything in the Service entry point:
 
 ```typescript
 // node/index.ts
@@ -2614,129 +2116,23 @@ export default new Service<Clients, RecorderState, ParamsContext>({
 })
 ```
 
-### Complete Example
+## Common failure modes
 
-Full project structure for a review service app:
+- **Using axios/fetch/got/node-fetch for HTTP calls**: These libraries bypass the entire VTEX IO infrastructure — no automatic auth token injection, no caching, no retry logic, no metrics. Outbound requests may also be blocked by the firewall. Create a proper client extending `ExternalClient` or `JanusClient` instead.
+- **Putting business logic in clients**: Clients become bloated and hard to test. Keep clients as thin wrappers around HTTP calls. Put business logic in middlewares or dedicated service functions.
+- **Direct client instantiation**: Using `new MyClient(...)` inside a middleware creates clients without auth context, caching, or metrics. Always access via `ctx.clients`.
 
-```typescript
-// node/clients/reviewStorageClient.ts
-import type { InstanceOptions, IOContext } from '@vtex/api'
-import { ExternalClient } from '@vtex/api'
+## Review checklist
 
-interface Review {
-  id: string
-  productId: string
-  rating: number
-  title: string
-  text: string
-  author: string
-  createdAt: string
-}
-
-export class ReviewStorageClient extends ExternalClient {
-  constructor(context: IOContext, options?: InstanceOptions) {
-    super('https://reviews-api.example.com', context, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${context.authToken}`,
-        ...options?.headers,
-      },
-    })
-  }
-
-  public async getByProduct(productId: string): Promise<Review[]> {
-    return this.http.get(`/reviews?productId=${productId}`, {
-      metric: 'review-storage-get-by-product',
-    })
-  }
-
-  public async create(review: Omit<Review, 'id' | 'createdAt'>): Promise<Review> {
-    return this.http.post('/reviews', review, {
-      metric: 'review-storage-create',
-    })
-  }
-}
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Using axios/fetch/got/node-fetch for HTTP Calls
-
-**What happens**: Developers install `axios`, `node-fetch`, or `got` in the `node/package.json` and use them directly in middlewares to call external APIs or VTEX Commerce APIs.
-
-**Why it fails**: These libraries bypass the entire VTEX IO infrastructure — no automatic auth token injection, no built-in caching, no retry logic, no timeout management, no metrics collection, and no billing tracking. Outbound requests may also be blocked by the VTEX IO firewall since they don't route through the proper infrastructure.
-
-**Fix**: Create a custom client extending `ExternalClient` (for non-VTEX APIs) or `JanusClient` (for VTEX APIs), and access it via `ctx.clients`:
-
-```typescript
-// Instead of: import axios from 'axios'
-// Create a proper client:
-import type { InstanceOptions, IOContext } from '@vtex/api'
-import { ExternalClient } from '@vtex/api'
-
-export class PaymentGatewayClient extends ExternalClient {
-  constructor(context: IOContext, options?: InstanceOptions) {
-    super('https://gateway.payment.com', context, {
-      ...options,
-      headers: {
-        'X-Gateway-Key': 'key',
-        ...options?.headers,
-      },
-    })
-  }
-
-  public async charge(amount: number, currency: string): Promise<ChargeResult> {
-    return this.http.post('/v1/charges', { amount, currency }, {
-      metric: 'payment-gateway-charge',
-    })
-  }
-}
-```
-
----
-
-### Anti-Pattern: Putting Business Logic in Clients
-
-**What happens**: Developers put complex business logic (validation, transformation, orchestration) inside client classes instead of keeping clients as thin data-access layers.
-
-**Why it fails**: Clients become bloated and hard to test. Business logic in clients couples your domain rules to the transport layer. When the external API changes, you must refactor both the communication and the business logic simultaneously.
-
-**Fix**: Keep clients as thin wrappers around HTTP calls. Put business logic in middlewares or dedicated service functions:
-
-```typescript
-// Client: thin data access only
-export class OrderClient extends JanusClient {
-  public async getOrder(orderId: string): Promise<Order> {
-    return this.http.get(`/api/oms/pvt/orders/${orderId}`, {
-      metric: 'oms-get-order',
-    })
-  }
-}
-
-// Middleware: business logic lives here
-export async function processOrderRefund(ctx: Context, next: () => Promise<void>) {
-  const order = await ctx.clients.orders.getOrder(ctx.params.orderId)
-
-  if (order.status !== 'invoiced') {
-    ctx.status = 400
-    ctx.body = { error: 'Only invoiced orders can be refunded' }
-    return
-  }
-
-  const refundAmount = calculateRefund(order)
-  await ctx.clients.payments.issueRefund(order.paymentId, refundAmount)
-
-  ctx.status = 200
-  ctx.body = { refundAmount }
-  await next()
-}
-```
+- [ ] Are all HTTP calls going through `@vtex/api` clients (no axios, fetch, got)?
+- [ ] Are all clients accessed via `ctx.clients`, never instantiated with `new`?
+- [ ] Are custom clients registered in the IOClients class?
+- [ ] Does the Service entry point correctly wire clients, routes, resolvers, and events?
+- [ ] Is business logic in middlewares/resolvers, not in client classes?
+- [ ] Does `service.json` have reasonable route count (≤10)?
+- [ ] Are client options (retries, timeout) configured appropriately?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Services](https://developers.vtex.com/docs/guides/vtex-io-documentation-service) — Overview of VTEX IO backend service development
 - [Clients](https://developers.vtex.com/docs/guides/vtex-io-documentation-clients) — Native client list and client architecture overview

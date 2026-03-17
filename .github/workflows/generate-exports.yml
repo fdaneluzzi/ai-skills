@@ -40,7 +40,9 @@ jobs:
         run: bun run export
 
       - name: Sync plugin directories
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
+          rm -f rules/*.mdc
           cp exports/cursor/*.mdc rules/
           rm -rf skills/
           cp -r exports/opencode/. skills/

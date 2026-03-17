@@ -5,11 +5,33 @@ import { join } from "path";
 interface SkillFrontmatter {
   name: string;
   description: string;
-  track: string;
-  tags: string[];
+  track?: string;
+  tags?: string[];
   globs?: string[];
   version?: string;
   vtex_docs_verified?: string;
+  metadata?: {
+    track?: string;
+    tags?: string[];
+    globs?: string[];
+    version?: string;
+    purpose?: string;
+    applies_to?: string[];
+    excludes?: string[];
+    decision_scope?: string[];
+    vtex_docs_verified?: string;
+  };
+}
+
+/**
+ * Resolves a field from flat frontmatter first, falling back to metadata.
+ * Supports dual-format skills (old flat format and new nested metadata format).
+ */
+function resolveField<T>(fm: SkillFrontmatter, field: string): T | undefined {
+  const flat = (fm as any)[field];
+  if (flat !== undefined && flat !== null) return flat as T;
+  if (fm.metadata) return (fm.metadata as any)[field] as T | undefined;
+  return undefined;
 }
 
 interface Skill {
@@ -98,15 +120,9 @@ function getProseLines(content: string): Array<{ line: number; text: string }> {
 const yamlValidity: ValidationCheck = {
   name: "yaml-validity",
   check(skill: Skill): ValidationResult[] {
-    const required: Array<keyof SkillFrontmatter> = [
-      "name",
-      "description",
-      "track",
-      "tags",
-    ];
     const results: ValidationResult[] = [];
 
-    for (const field of required) {
+    for (const field of ["name", "description"] as const) {
       const value = skill.frontmatter[field];
       if (value === undefined || value === null || value === "") {
         results.push({
@@ -116,10 +132,21 @@ const yamlValidity: ValidationCheck = {
       }
     }
 
-    if (
-      skill.frontmatter.tags !== undefined &&
-      !Array.isArray(skill.frontmatter.tags)
-    ) {
+    const track = resolveField<string>(skill.frontmatter, "track");
+    if (track === undefined || track === null || track === "") {
+      results.push({
+        passed: false,
+        message: `Missing required frontmatter field: "track"`,
+      });
+    }
+
+    const tags = resolveField<string[]>(skill.frontmatter, "tags");
+    if (tags === undefined || tags === null) {
+      results.push({
+        passed: false,
+        message: `Missing required frontmatter field: "tags"`,
+      });
+    } else if (!Array.isArray(tags)) {
       results.push({
         passed: false,
         message: `"tags" must be an array`,
@@ -160,7 +187,7 @@ const descriptionQuality: ValidationCheck = {
 const requiredSections: ValidationCheck = {
   name: "required-sections",
   check(skill: Skill): ValidationResult[] {
-    const sections = [
+    const oldSections = [
       "Overview",
       "Key Concepts",
       "Constraints",
@@ -168,6 +195,21 @@ const requiredSections: ValidationCheck = {
       "Anti-Patterns",
       "Reference",
     ];
+    const newSections = [
+      "When this skill applies",
+      "Decision rules",
+      "Hard constraints",
+      "Preferred pattern",
+      "Common failure modes",
+      "Review checklist",
+      "Reference",
+    ];
+
+    const isNewFormat =
+      skill.frontmatter.metadata !== undefined ||
+      /^##\s+When this skill applies/im.test(skill.content);
+
+    const sections = isNewFormat ? newSections : oldSections;
     const results: ValidationResult[] = [];
 
     for (const section of sections) {
@@ -272,26 +314,30 @@ const detectionPatterns: ValidationCheck = {
 const pairedExamples: ValidationCheck = {
   name: "paired-examples",
   check(skill: Skill): ValidationResult[] {
+    const hasOldCorrect = skill.content.includes("✅");
+    const hasOldIncorrect = skill.content.includes("❌");
+    const hasNewCorrect = skill.content.includes("**Correct**");
+    const hasNewIncorrect = skill.content.includes("**Wrong**");
+
+    const hasCorrectPair = hasOldCorrect && hasOldIncorrect;
+    const hasNewPair = hasNewCorrect && hasNewIncorrect;
+
+    if (hasCorrectPair || hasNewPair) {
+      return [{ passed: true, message: "Paired example markers present" }];
+    }
+
     const results: ValidationResult[] = [];
-    const hasCorrect = skill.content.includes("✅");
-    const hasIncorrect = skill.content.includes("❌");
-
-    if (!hasCorrect) {
+    if (!hasOldCorrect && !hasNewCorrect) {
       results.push({
         passed: false,
-        message: `Missing ✅ (correct example marker)`,
+        message: `Missing correct example marker (✅ or **Correct**)`,
       });
     }
-
-    if (!hasIncorrect) {
+    if (!hasOldIncorrect && !hasNewIncorrect) {
       results.push({
         passed: false,
-        message: `Missing ❌ (incorrect example marker)`,
+        message: `Missing incorrect example marker (❌ or **Wrong**)`,
       });
-    }
-
-    if (results.length === 0) {
-      results.push({ passed: true, message: "Both ✅ and ❌ example markers present" });
     }
 
     return results;
@@ -343,7 +389,7 @@ const trackConsistency: ValidationCheck = {
   check(skill: Skill): ValidationResult[] {
     const pathParts = skill.filePath.split("/");
     const dirTrack = pathParts[1];
-    const fmTrack = skill.frontmatter.track;
+    const fmTrack = resolveField<string>(skill.frontmatter, "track");
 
     if (fmTrack !== dirTrack) {
       return [
@@ -367,7 +413,7 @@ const trackConsistency: ValidationCheck = {
 const globsFormat: ValidationCheck = {
   name: "globs-format",
   check(skill: Skill): ValidationResult[] {
-    const globs = skill.frontmatter.globs;
+    const globs = resolveField<string[]>(skill.frontmatter, "globs");
     const results: ValidationResult[] = [];
 
     // If globs is undefined/missing, it's optional — pass

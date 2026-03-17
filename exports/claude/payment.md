@@ -2,74 +2,42 @@ This skill provides guidance for AI agents working with VTEX Payment Connector D
 
 # Asynchronous Payment Flows & Callbacks
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The complete asynchronous payment authorization flow in the VTEX Payment Provider Protocol. This includes returning `undefined` status for pending payments, using the `callbackUrl` to notify the Gateway of final status, handling the difference between notification callbacks (non-VTEX IO) and retry callbacks (VTEX IO), and managing the 7-day retry window.
+Use this skill when:
+- Implementing a payment connector that supports Boleto Bancário, Pix, bank transfers, or redirect-based flows
+- Working with any payment method where the acquirer does not return a final status synchronously
+- Handling `callbackUrl` notification or retry flows
+- Managing the Gateway's 7-day automatic retry cycle for `undefined` status payments
 
-**When to use it**: When implementing a payment connector that supports any asynchronous payment method — Boleto Bancário, Pix, bank transfers, redirect-based flows, or any method where the acquirer does not return a final status synchronously.
+Do not use this skill for:
+- PPP endpoint contracts and response shapes — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
+- `paymentId`/`requestId` idempotency and state machine logic — use [`payment-idempotency`](../payment-idempotency/skill.md)
+- PCI compliance and Secure Proxy card handling — use [`payment-pci-security`](../payment-pci-security/skill.md)
 
-**What you'll learn**:
-- When and how to return `undefined` status from Create Payment
-- How the `callbackUrl` notification and retry flows work
-- How to validate `X-VTEX-signature` on callback URLs
-- How to handle the Gateway's automatic 7-day retry cycle
+## Decision rules
 
-## Key Concepts
+- If the acquirer cannot return a final status synchronously, the payment method is async — return `status: "undefined"`.
+- Common async methods: Boleto Bancário (`BankInvoice`), Pix, bank transfers, redirect-based auth.
+- Common sync methods: credit cards, debit cards with instant authorization.
+- **Without VTEX IO**: the `callbackUrl` is a notification endpoint — POST the updated status with `X-VTEX-API-AppKey`/`X-VTEX-API-AppToken` headers.
+- **With VTEX IO**: the `callbackUrl` is a retry endpoint — POST to it (no payload) to trigger the Gateway to re-call POST `/payments`.
+- Always preserve the `X-VTEX-signature` query parameter in the `callbackUrl` — never strip or modify it.
+- Set `delayToCancel` to 604800 (7 days) for async methods to match the Gateway's retry window.
 
-**Essential knowledge before implementation**:
+## Hard constraints
 
-### Concept 1: The `undefined` Status
+### Constraint: MUST return `undefined` for async payment methods
 
-When a payment cannot be resolved immediately (the acquirer needs time, the customer must complete an action), the connector returns `status: "undefined"` in the Create Payment response. This tells the Gateway the payment is pending — not failed, not approved. The Gateway will then wait and retry until a final status (`approved` or `denied`) is received.
+For any payment method where authorization does not complete synchronously (Boleto, Pix, bank transfer, redirect-based auth), the Create Payment response MUST use `status: "undefined"`. The connector MUST NOT return `"approved"` or `"denied"` until the payment is actually confirmed or rejected by the acquirer.
 
-### Concept 2: Callback URL — Two Flows
+**Why this matters**
+Returning `"approved"` for an unconfirmed payment tells the Gateway the money has been collected. The order is released for fulfillment immediately. If the customer never actually pays (e.g., never scans the Pix QR code), the merchant ships products without payment. Returning `"denied"` prematurely cancels a payment that might still be completed.
 
-The `callbackUrl` is provided in the Create Payment request body. Its behavior depends on the hosting model:
+**Detection**
+If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect), STOP. Async methods must return `"undefined"` and resolve via callback.
 
-- **Without VTEX IO** (partner infrastructure): The `callbackUrl` is a **notification endpoint**. The provider POSTs the updated status directly to this URL with `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers.
-- **With VTEX IO**: The `callbackUrl` is a **retry endpoint**. The provider calls this URL (no payload required) to trigger the Gateway to re-call the Create Payment (`/payments`) endpoint. The Gateway then receives the updated status from the provider's response.
-
-Both flows require the `X-VTEX-signature` query parameter to be preserved when calling the callback URL.
-
-### Concept 3: The 7-Day Retry Window
-
-If a payment remains in `undefined` status, the VTEX Gateway automatically retries the Create Payment endpoint periodically for up to 7 days. During this window, the connector must be prepared to receive repeated Create Payment calls with the same `paymentId`. When the payment is finally resolved, the connector returns the final status. If still `undefined` after 7 days, the payment is automatically cancelled.
-
-### Concept 4: X-VTEX-signature
-
-The `callbackUrl` includes a query parameter `X-VTEX-signature`. This is a mandatory authentication token that identifies the transaction. When calling the callback URL, the provider must use the URL exactly as received (including all query parameters) to ensure the Gateway can authenticate the callback.
-
-**Architecture/Data Flow (Non-VTEX IO)**:
-
-```text
-1. Gateway → POST /payments → Connector (returns status: "undefined")
-2. Acquirer webhook → Connector (payment confirmed)
-3. Connector → POST callbackUrl (with X-VTEX-API-AppKey/AppToken headers)
-4. Gateway updates payment status to approved/denied
-```
-
-**Architecture/Data Flow (VTEX IO)**:
-
-```text
-1. Gateway → POST /payments → Connector (returns status: "undefined")
-2. Acquirer webhook → Connector (payment confirmed)
-3. Connector → POST callbackUrl (retry, no payload)
-4. Gateway → POST /payments → Connector (returns status: "approved"/"denied")
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: MUST Return `undefined` for Async Payment Methods
-
-**Rule**: For any payment method where authorization does not complete synchronously (Boleto, Pix, bank transfer, redirect-based auth), the Create Payment response MUST use `status: "undefined"`. The connector MUST NOT return `"approved"` or `"denied"` until the payment is actually confirmed or rejected by the acquirer.
-
-**Why**: Returning `"approved"` for an unconfirmed payment tells the Gateway the money has been collected. The order is released for fulfillment immediately. If the customer never actually pays (e.g., never scans the Pix QR code), the merchant ships products without payment. Returning `"denied"` prematurely cancels a payment that might still be completed by the customer.
-
-**Detection**: If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect), STOP. Async methods must return `"undefined"` and resolve via callback.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod, callbackUrl } = req.body;
@@ -115,7 +83,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod } = req.body;
@@ -140,17 +108,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST use callbackUrl from request — never hardcode
 
-### Constraint: MUST Use callbackUrl from Request — Never Hardcode
+The connector MUST use the exact `callbackUrl` provided in the Create Payment request body, including all query parameters (`X-VTEX-signature`, etc.). The connector MUST NOT hardcode callback URLs or construct them manually.
 
-**Rule**: The connector MUST use the exact `callbackUrl` provided in the Create Payment request body, including all query parameters (`X-VTEX-signature`, etc.). The connector MUST NOT hardcode callback URLs or construct them manually.
+**Why this matters**
+The `callbackUrl` contains transaction-specific authentication tokens (`X-VTEX-signature`) that the Gateway uses to validate the callback. A hardcoded or modified URL will be rejected by the Gateway, leaving the payment stuck in `undefined` status forever. The URL format may also change between environments (production vs sandbox).
 
-**Why**: The `callbackUrl` contains transaction-specific authentication tokens (`X-VTEX-signature`) that the Gateway uses to validate the callback. A hardcoded or modified URL will be rejected by the Gateway, leaving the payment stuck in `undefined` status forever. The URL format may also change between environments (production vs sandbox).
+**Detection**
+If the connector hardcodes a callback URL string, constructs the URL manually, or strips query parameters from the `callbackUrl`, warn the developer. The `callbackUrl` must be stored and used exactly as received.
 
-**Detection**: If the connector hardcodes a callback URL string, constructs the URL manually, or strips query parameters from the `callbackUrl`, warn the developer. The `callbackUrl` must be stored and used exactly as received.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, callbackUrl } = req.body;
@@ -192,7 +160,7 @@ async function handleAcquirerWebhook(req: Request, res: Response): Promise<void>
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // WRONG: Hardcoding callback URL — ignores X-VTEX-signature and environment
 async function handleAcquirerWebhook(req: Request, res: Response): Promise<void> {
@@ -213,17 +181,17 @@ async function handleAcquirerWebhook(req: Request, res: Response): Promise<void>
 }
 ```
 
----
+### Constraint: MUST be ready for repeated Create Payment calls
 
-### Constraint: MUST Be Ready for Repeated Create Payment Calls
+The connector MUST handle the Gateway calling Create Payment with the same `paymentId` multiple times during the 7-day retry window. Each call must return the current payment status (which may have been updated via callback since the last call).
 
-**Rule**: The connector MUST handle the Gateway calling Create Payment with the same `paymentId` multiple times during the 7-day retry window. Each call must return the current payment status (which may have been updated via callback since the last call).
+**Why this matters**
+The Gateway retries `undefined` payments automatically. If the connector treats each call as a new payment, it will create duplicate charges. If the connector always returns the original `undefined` status without checking for updates, the Gateway never learns that the payment was approved, and eventually cancels it.
 
-**Why**: The Gateway retries `undefined` payments automatically. If the connector treats each call as a new payment, it will create duplicate charges. If the connector always returns the original `undefined` status without checking for updates, the Gateway never learns that the payment was approved, and eventually cancels it.
+**Detection**
+If the Create Payment handler does not check for an existing `paymentId` and return the latest status, STOP. The handler must support idempotent retries that reflect the current state.
 
-**Detection**: If the Create Payment handler does not check for an existing `paymentId` and return the latest status, STOP. The handler must support idempotent retries that reflect the current state.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -244,7 +212,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -262,13 +230,27 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Data flow for non-VTEX IO (notification callback):
 
-### Step 1: Classify Payment Methods as Sync or Async
+```text
+1. Gateway → POST /payments → Connector (returns status: "undefined")
+2. Acquirer webhook → Connector (payment confirmed)
+3. Connector → POST callbackUrl (with X-VTEX-API-AppKey/AppToken headers)
+4. Gateway updates payment status to approved/denied
+```
 
-Determine which payment methods require async handling at the start of the Create Payment flow.
+Data flow for VTEX IO (retry callback):
+
+```text
+1. Gateway → POST /payments → Connector (returns status: "undefined")
+2. Acquirer webhook → Connector (payment confirmed)
+3. Connector → POST callbackUrl (retry, no payload)
+4. Gateway → POST /payments → Connector (returns status: "approved"/"denied")
+```
+
+Classify payment methods:
 
 ```typescript
 const ASYNC_PAYMENT_METHODS = new Set([
@@ -281,128 +263,10 @@ function isAsyncPaymentMethod(paymentMethod: string): boolean {
 }
 ```
 
-### Step 2: Implement Async Create Payment with callbackUrl Storage
-
-Return `undefined` and store the `callbackUrl` for later use.
+Acquirer webhook handler with callback notification (non-VTEX IO):
 
 ```typescript
-async function createPaymentHandler(req: Request, res: Response): Promise<void> {
-  const { paymentId, paymentMethod, callbackUrl } = req.body;
-
-  // Idempotency check — return latest status if payment exists
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json({
-      ...existing.response,
-      status: existing.status,
-    });
-    return;
-  }
-
-  if (isAsyncPaymentMethod(paymentMethod)) {
-    const pending = await acquirer.initiateAsync(req.body);
-
-    const response = {
-      paymentId,
-      status: "undefined" as const,
-      authorizationId: pending.authorizationId ?? null,
-      nsu: pending.nsu ?? null,
-      tid: pending.tid ?? null,
-      acquirer: "MyProvider",
-      code: "ASYNC-PENDING",
-      message: "Awaiting payment confirmation",
-      delayToAutoSettle: 21600,
-      delayToAutoSettleAfterAntifraud: 1800,
-      delayToCancel: 604800,
-      paymentUrl: pending.paymentUrl ?? undefined,
-    };
-
-    await store.save(paymentId, {
-      paymentId,
-      status: "undefined",
-      callbackUrl,
-      acquirerRef: pending.reference,
-      response,
-    });
-
-    res.status(200).json(response);
-    return;
-  }
-
-  // Sync flow — process and return final status
-  const result = await acquirer.authorizeSync(req.body);
-  const response = {
-    paymentId,
-    status: result.approved ? "approved" : "denied",
-    authorizationId: result.authorizationId ?? null,
-    nsu: result.nsu ?? null,
-    tid: result.tid ?? null,
-    acquirer: "MyProvider",
-    code: result.code ?? null,
-    message: result.message ?? null,
-    delayToAutoSettle: 21600,
-    delayToAutoSettleAfterAntifraud: 1800,
-    delayToCancel: 21600,
-  };
-
-  await store.save(paymentId, {
-    paymentId,
-    status: response.status,
-    response,
-  });
-
-  res.status(200).json(response);
-}
-```
-
-### Step 3: Implement the Acquirer Webhook Handler with Callback Notification
-
-When the acquirer confirms the payment, update local state and notify the Gateway.
-
-```typescript
-// Non-VTEX IO: Use notification callback
 async function handleAcquirerWebhook(req: Request, res: Response): Promise<void> {
-  const webhookData = req.body;
-  const acquirerRef = webhookData.transactionId;
-  const acquirerStatus = webhookData.status; // "paid", "expired", "failed"
-
-  const payment = await store.findByAcquirerRef(acquirerRef);
-  if (!payment || !payment.callbackUrl) {
-    res.status(404).json({ error: "Payment not found" });
-    return;
-  }
-
-  // Map acquirer status to PPP status
-  const pppStatus = acquirerStatus === "paid" ? "approved" : "denied";
-
-  // Update local state FIRST
-  await store.updateStatus(payment.paymentId, pppStatus);
-
-  // Notify the Gateway via callbackUrl — use it exactly as stored
-  try {
-    await fetch(payment.callbackUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-VTEX-API-AppKey": process.env.VTEX_APP_KEY!,
-        "X-VTEX-API-AppToken": process.env.VTEX_APP_TOKEN!,
-      },
-      body: JSON.stringify({
-        paymentId: payment.paymentId,
-        status: pppStatus,
-      }),
-    });
-  } catch (error) {
-    // Log the error but don't fail — the Gateway will also retry via /payments
-    console.error(`Callback failed for ${payment.paymentId}:`, error);
-    // The Gateway's 7-day retry on /payments acts as a safety net
-  }
-
-  res.status(200).json({ received: true });
-}
-
-// For VTEX IO: Use retry callback (no payload needed)
-async function handleAcquirerWebhookVtexIO(req: Request, res: Response): Promise<void> {
   const webhookData = req.body;
   const acquirerRef = webhookData.transactionId;
 
@@ -413,157 +277,21 @@ async function handleAcquirerWebhookVtexIO(req: Request, res: Response): Promise
   }
 
   const pppStatus = webhookData.status === "paid" ? "approved" : "denied";
+
+  // Update local state FIRST
   await store.updateStatus(payment.paymentId, pppStatus);
 
-  // VTEX IO: Just call the retry URL — Gateway will re-call POST /payments
-  try {
-    await fetch(payment.callbackUrl, { method: "POST" });
-  } catch (error) {
-    console.error(`Retry callback failed for ${payment.paymentId}:`, error);
-  }
+  // Notify the Gateway via callbackUrl with retry logic
+  await notifyGateway(payment.callbackUrl, {
+    paymentId: payment.paymentId,
+    status: pppStatus,
+  });
 
   res.status(200).json({ received: true });
 }
 ```
 
-### Complete Example
-
-Full async payment flow with webhook and callback:
-
-```typescript
-import express, { Request, Response } from "express";
-
-const app = express();
-app.use(express.json());
-
-const ASYNC_METHODS = new Set(["BankInvoice", "Pix"]);
-
-// Create Payment — supports both sync and async methods
-app.post("/payments", async (req: Request, res: Response) => {
-  const { paymentId, paymentMethod, callbackUrl } = req.body;
-
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json({ ...existing.response, status: existing.status });
-    return;
-  }
-
-  if (ASYNC_METHODS.has(paymentMethod)) {
-    const pending = await acquirer.initiateAsync(req.body);
-    const response = buildAsyncResponse(paymentId, pending);
-    await store.save(paymentId, {
-      paymentId, status: "undefined", callbackUrl,
-      acquirerRef: pending.reference, response,
-    });
-    res.status(200).json(response);
-  } else {
-    const result = await acquirer.authorizeSync(req.body);
-    const response = buildSyncResponse(paymentId, result);
-    await store.save(paymentId, { paymentId, status: response.status, response });
-    res.status(200).json(response);
-  }
-});
-
-// Acquirer Webhook — receives payment confirmation, notifies Gateway
-app.post("/webhooks/acquirer", async (req: Request, res: Response) => {
-  const { transactionId, status: acquirerStatus } = req.body;
-  const payment = await store.findByAcquirerRef(transactionId);
-  if (!payment) { res.status(404).send(); return; }
-
-  const pppStatus = acquirerStatus === "paid" ? "approved" : "denied";
-  await store.updateStatus(payment.paymentId, pppStatus);
-
-  if (payment.callbackUrl) {
-    try {
-      await fetch(payment.callbackUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-VTEX-API-AppKey": process.env.VTEX_APP_KEY!,
-          "X-VTEX-API-AppToken": process.env.VTEX_APP_TOKEN!,
-        },
-        body: JSON.stringify({ paymentId: payment.paymentId, status: pppStatus }),
-      });
-    } catch (err) {
-      console.error("Callback failed, Gateway will retry via /payments", err);
-    }
-  }
-
-  res.status(200).send();
-});
-
-app.listen(443);
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Synchronous Approval of Async Payments
-
-**What happens**: The connector receives a Pix or Boleto Create Payment request and immediately returns `status: "approved"` because the QR code or slip was generated successfully.
-
-**Why it fails**: Generating a QR code or Boleto slip is not the same as receiving payment. The customer still needs to scan/pay. Returning `"approved"` triggers order fulfillment before payment is confirmed. The merchant ships products and never receives payment.
-
-**Fix**: Always return `"undefined"` for async methods and wait for acquirer confirmation:
-
-```typescript
-if (ASYNC_METHODS.has(paymentMethod)) {
-  const pending = await acquirer.initiateAsync(req.body);
-  res.status(200).json({
-    paymentId,
-    status: "undefined",  // Never "approved" for async
-    // ...
-    paymentUrl: pending.qrCodeUrl,  // Customer scans this to pay
-  });
-}
-```
-
----
-
-### Anti-Pattern: Ignoring the callbackUrl
-
-**What happens**: The connector does not store the `callbackUrl` from the Create Payment request and relies entirely on the Gateway's automatic retries to detect payment completion.
-
-**Why it fails**: The Gateway's retry interval increases over time. Without callback notification, there can be a long delay between the customer paying and the order being approved. This creates a poor customer experience and increases support tickets. In worst cases, the 7-day window expires and the payment is cancelled even though the customer paid.
-
-**Fix**: Always store and use the `callbackUrl`:
-
-```typescript
-// Store the callbackUrl when creating the payment
-await store.save(paymentId, {
-  paymentId,
-  status: "undefined",
-  callbackUrl: req.body.callbackUrl,  // Store this!
-  acquirerRef: pending.reference,
-});
-
-// Use it when the acquirer confirms payment
-async function onAcquirerConfirmation(paymentId: string): Promise<void> {
-  const payment = await store.findByPaymentId(paymentId);
-  if (payment?.callbackUrl) {
-    await fetch(payment.callbackUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-VTEX-API-AppKey": process.env.VTEX_APP_KEY!,
-        "X-VTEX-API-AppToken": process.env.VTEX_APP_TOKEN!,
-      },
-      body: JSON.stringify({ paymentId, status: "approved" }),
-    });
-  }
-}
-```
-
----
-
-### Anti-Pattern: No Retry Logic for Failed Callbacks
-
-**What happens**: The connector calls the `callbackUrl` once, and if the request fails (network error, timeout, 5xx), it silently drops the notification.
-
-**Why it fails**: If the callback fails and the connector doesn't retry, the Gateway never learns the payment was approved. The payment sits in `undefined` until the Gateway's next retry of Create Payment, which may be hours away. In the worst case, the payment is auto-cancelled after 7 days.
-
-**Fix**: Implement retry logic with exponential backoff for callback failures:
+Callback retry with exponential backoff:
 
 ```typescript
 async function notifyGateway(callbackUrl: string, payload: object): Promise<void> {
@@ -583,7 +311,6 @@ async function notifyGateway(callbackUrl: string, payload: object): Promise<void
       });
 
       if (response.ok) return;
-
       console.error(`Callback attempt ${attempt + 1} failed: ${response.status}`);
     } catch (error) {
       console.error(`Callback attempt ${attempt + 1} error:`, error);
@@ -599,9 +326,32 @@ async function notifyGateway(callbackUrl: string, payload: object): Promise<void
 }
 ```
 
-## Reference
+## Common failure modes
 
-**Links to VTEX documentation and related resources.**
+- **Synchronous approval of async payments** — Returning `status: "approved"` for Pix or Boleto because the QR code or slip was generated successfully. Generating a QR code is not the same as receiving payment. The order ships without money collected.
+- **Ignoring the callbackUrl** — Not storing the `callbackUrl` from the Create Payment request and relying entirely on the Gateway's automatic retries. The retry interval increases over time, causing long delays between payment and order approval. Worst case: the 7-day window expires and the payment is cancelled even though the customer paid.
+- **Hardcoding callback URLs** — Constructing callback URLs manually instead of using the one from the request, stripping the `X-VTEX-signature` parameter. The Gateway rejects the callback and the payment stays stuck in `undefined`.
+- **No retry logic for failed callbacks** — Calling the `callbackUrl` once and silently dropping the notification on failure. The Gateway never learns the payment was approved, and the payment sits in `undefined` until the next retry or is auto-cancelled.
+- **Returning stale status on retries** — Always returning the original `undefined` response without checking if the status was updated via callback. The Gateway never sees the `approved` status and eventually cancels the payment.
+
+## Review checklist
+
+- [ ] Do async payment methods (Boleto, Pix) return `status: "undefined"` in Create Payment?
+- [ ] Is the `callbackUrl` stored exactly as received from the request (including all query params)?
+- [ ] Does the webhook handler update local state before calling the `callbackUrl`?
+- [ ] Is `X-VTEX-signature` preserved in the `callbackUrl` when calling it?
+- [ ] Are `X-VTEX-API-AppKey` and `X-VTEX-API-AppToken` headers included in notification callbacks (non-VTEX IO)?
+- [ ] Is there retry logic with exponential backoff for failed callback calls?
+- [ ] Does the Create Payment handler return the latest status (not stale) on Gateway retries?
+- [ ] Is `delayToCancel` set to 604800 (7 days) for async methods?
+
+## Related skills
+
+- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
+- [`payment-idempotency`](../payment-idempotency/skill.md) — `paymentId`/`requestId` idempotency and state machine
+- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance and Secure Proxy
+
+## Reference
 
 - [Payment Provider Protocol (Help Center)](https://help.vtex.com/en/docs/tutorials/payment-provider-protocol) — Detailed explanation of the `undefined` status, callback URL notification and retry flows, and the 7-day retry window
 - [Purchase Flows](https://developers.vtex.com/docs/guides/payments-integration-purchase-flows) — Authorization flow documentation including async retry mechanics and callback URL behavior for VTEX IO vs non-VTEX IO
@@ -616,59 +366,41 @@ This skill provides guidance for AI agents working with VTEX Payment Connector D
 
 # Idempotency & Duplicate Prevention
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: Idempotency patterns for VTEX Payment Provider Protocol connectors. This includes using `paymentId` as the primary idempotency key for Create Payment, using `requestId` for Cancel/Capture/Refund operations, implementing a payment state machine, and handling Gateway retries that can occur for up to 7 days on `undefined` status payments.
+Use this skill when:
+- Implementing any PPP endpoint handler that processes payments, cancellations, captures, or refunds
+- Ensuring repeated Gateway calls with the same identifiers produce identical results without re-processing
+- Building a payment state machine to prevent invalid transitions (e.g., capturing a cancelled payment)
+- Handling the Gateway's 7-day retry window for `undefined` status payments
 
-**When to use it**: When implementing any PPP endpoint handler that processes payments, cancellations, captures, or refunds. Use this skill whenever you need to ensure that repeated Gateway calls with the same identifiers produce identical results without re-processing.
+Do not use this skill for:
+- PPP endpoint response shapes and HTTP methods — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
+- Async callback URL notification logic — use [`payment-async-flow`](../payment-async-flow/skill.md)
+- PCI compliance and Secure Proxy — use [`payment-pci-security`](../payment-pci-security/skill.md)
 
-**What you'll learn**:
-- How `paymentId` and `requestId` function as idempotency keys across different endpoints
-- How to build a state machine that prevents invalid transitions
-- How to store and return cached responses for duplicate requests
-- Why the Gateway retries `undefined` payments for up to 7 days
+## Decision rules
 
-## Key Concepts
+- Use `paymentId` as the idempotency key for Create Payment — every call with the same `paymentId` must return the same result.
+- Use `requestId` as the idempotency key for Cancel, Capture, and Refund operations.
+- If the Gateway sends a second Create Payment with the same `paymentId`, return the stored response without calling the acquirer again.
+- Async payment methods (Boleto, Pix) MUST return `status: "undefined"` — never `"approved"` until the acquirer confirms.
+- A payment moves through defined states: `undefined` → `approved` → `settled`, or `undefined` → `denied`, or `approved` → `cancelled`. Enforce valid transitions only.
+- Use a persistent data store (PostgreSQL, DynamoDB, VBase for VTEX IO) — never in-memory storage that is lost on restart.
 
-**Essential knowledge before implementation**:
+## Hard constraints
 
-### Concept 1: paymentId as Idempotency Key
+### Constraint: MUST use paymentId as idempotency key for Create Payment
 
-Every Create Payment request from the VTEX Gateway includes a unique `paymentId`. This identifier is the canonical idempotency key for the payment lifecycle. If the Gateway sends a second Create Payment request with the same `paymentId`, the connector MUST return the exact same response as the first call without creating a new transaction at the acquirer. The Gateway retries Create Payment calls with `undefined` status for up to 7 days.
+The connector MUST check for an existing record with the given `paymentId` before processing a new payment. If a record exists, return the stored response without calling the acquirer again.
 
-### Concept 2: requestId for Operation Idempotency
+**Why this matters**
+The VTEX Gateway retries Create Payment requests with `undefined` status for up to 7 days. Without idempotency on `paymentId`, each retry creates a new charge at the acquirer, resulting in duplicate charges to the customer. This is a financial loss and a critical production incident.
 
-Cancel, Capture, and Refund requests include a `requestId` field that ensures operational idempotency. The cancellation flow can be retried for an entire day. Each `requestId` represents a single logical operation — if the connector receives the same `requestId` again, it must return the previously computed result without re-executing the operation at the acquirer.
+**Detection**
+If the Create Payment handler does not check for an existing `paymentId` before processing, STOP. The handler must query the data store for the `paymentId` first.
 
-### Concept 3: Payment State Machine
-
-A payment moves through defined states: `undefined` → `approved` → `settled` or `undefined` → `denied` or `approved` → `cancelled`. The connector must enforce valid transitions. An `approved` payment cannot be approved again; a `cancelled` payment cannot be captured. The state machine prevents double-charging and ensures idempotent behavior.
-
-**Architecture/Data Flow**:
-
-```text
-Gateway sends POST /payments (paymentId=ABC)
-  → Connector checks store: paymentId=ABC exists?
-    → YES: return stored response (no acquirer call)
-    → NO: process with acquirer, store result, return response
-
-Gateway retries POST /payments (paymentId=ABC) [up to 7 days if undefined]
-  → Connector finds paymentId=ABC in store → returns stored response
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: MUST Use paymentId as Idempotency Key for Create Payment
-
-**Rule**: The connector MUST check for an existing record with the given `paymentId` before processing a new payment. If a record exists, return the stored response without calling the acquirer again.
-
-**Why**: The VTEX Gateway retries Create Payment requests with `undefined` status for up to 7 days. Without idempotency on `paymentId`, each retry creates a new charge at the acquirer, resulting in duplicate charges to the customer. This is a financial loss and a critical production incident.
-
-**Detection**: If the Create Payment handler does not check for an existing `paymentId` before processing, STOP. The handler must query the data store for the `paymentId` first.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -705,7 +437,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -731,17 +463,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST return identical response for duplicate requests
 
-### Constraint: MUST Return Identical Response for Duplicate Requests
+When the connector receives a Create Payment request with a `paymentId` that already exists in the data store, it MUST return the exact stored response. It MUST NOT create a new record, generate new identifiers, or re-process the payment.
 
-**Rule**: When the connector receives a Create Payment request with a `paymentId` that already exists in the data store, it MUST return the exact stored response. It MUST NOT create a new record, generate new identifiers, or re-process the payment.
+**Why this matters**
+The Gateway uses the response fields (`authorizationId`, `tid`, `nsu`, `status`) to track the transaction. If a retry returns different values, the Gateway loses track of the original transaction, causing reconciliation failures and potential double settlements.
 
-**Why**: The Gateway uses the response fields (`authorizationId`, `tid`, `nsu`, `status`) to track the transaction. If a retry returns different values, the Gateway loses track of the original transaction, causing reconciliation failures and potential double settlements.
+**Detection**
+If the handler creates a new database record or generates new identifiers when it finds an existing `paymentId`, STOP. The handler must return the previously stored response verbatim.
 
-**Detection**: If the handler creates a new database record or generates new identifiers when it finds an existing `paymentId`, STOP. The handler must return the previously stored response verbatim.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -757,7 +489,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId } = req.body;
@@ -779,17 +511,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST NOT approve async payments synchronously
 
-### Constraint: MUST NOT Approve Async Payments Synchronously
+If a payment method is asynchronous (e.g., Boleto, Pix, bank redirect), the Create Payment response MUST return `status: "undefined"`. It MUST NOT return `status: "approved"` or `status: "denied"` until the payment is actually confirmed or rejected by the acquirer.
 
-**Rule**: If a payment method is asynchronous (e.g., Boleto, Pix, bank redirect), the Create Payment response MUST return `status: "undefined"`. It MUST NOT return `status: "approved"` or `status: "denied"` until the payment is actually confirmed or rejected by the acquirer.
+**Why this matters**
+Returning `approved` for an async method tells the Gateway the payment is confirmed before the customer has actually paid. The order ships, but no money was collected. The merchant loses the product and the revenue. The correct flow is to return `undefined` and use the `callbackUrl` to notify the Gateway when the payment is confirmed.
 
-**Why**: Returning `approved` for an async method tells the Gateway the payment is confirmed before the customer has actually paid. The order ships, but no money was collected. The merchant loses the product and the revenue. The correct flow is to return `undefined` and use the `callbackUrl` to notify the Gateway when the payment is confirmed.
+**Detection**
+If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect-based), STOP. Async methods must return `"undefined"` and use callbacks.
 
-**Detection**: If the Create Payment handler returns `status: "approved"` or `status: "denied"` for an asynchronous payment method (Boleto, Pix, bank transfer, redirect-based), STOP. Async methods must return `"undefined"` and use callbacks.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod, callbackUrl } = req.body;
@@ -797,7 +529,6 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
   const isAsyncMethod = ["BankInvoice", "Pix"].includes(paymentMethod);
 
   if (isAsyncMethod) {
-    // Initiate async payment — do NOT return approved
     const pending = await acquirer.initiateAsyncPayment(req.body);
 
     await paymentStore.save(paymentId, {
@@ -828,7 +559,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, paymentMethod } = req.body;
@@ -853,13 +584,9 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
-
-### Step 1: Create a Payment State Store
-
-Build a persistent store keyed by `paymentId` that tracks payment state and cached responses.
+Payment state store with idempotency support:
 
 ```typescript
 interface PaymentRecord {
@@ -878,48 +605,15 @@ interface OperationRecord {
   response: Record<string, unknown>;
   createdAt: Date;
 }
-
-class PaymentStore {
-  // Use a database in production (PostgreSQL, DynamoDB, VBase for VTEX IO)
-  private payments = new Map<string, PaymentRecord>();
-  private operations = new Map<string, OperationRecord>();
-
-  async findByPaymentId(paymentId: string): Promise<PaymentRecord | null> {
-    return this.payments.get(paymentId) ?? null;
-  }
-
-  async save(paymentId: string, record: PaymentRecord): Promise<void> {
-    this.payments.set(paymentId, record);
-  }
-
-  async updateStatus(paymentId: string, status: PaymentRecord["status"]): Promise<void> {
-    const record = this.payments.get(paymentId);
-    if (record) {
-      record.status = status;
-      record.updatedAt = new Date();
-    }
-  }
-
-  async findOperation(requestId: string): Promise<OperationRecord | null> {
-    return this.operations.get(requestId) ?? null;
-  }
-
-  async saveOperation(requestId: string, record: OperationRecord): Promise<void> {
-    this.operations.set(requestId, record);
-  }
-}
 ```
 
-### Step 2: Implement Idempotent Create Payment
-
-Guard every Create Payment call with a `paymentId` lookup.
+Idempotent Create Payment with state machine:
 
 ```typescript
 const store = new PaymentStore();
 
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
-  const body = req.body;
-  const { paymentId, paymentMethod, callbackUrl } = body;
+  const { paymentId, paymentMethod, callbackUrl } = req.body;
 
   // Idempotency check
   const existing = await store.findByPaymentId(paymentId);
@@ -929,7 +623,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
   }
 
   const isAsync = ["BankInvoice", "Pix"].includes(paymentMethod);
-  const result = await acquirer.process(body);
+  const result = await acquirer.process(req.body);
 
   const status = isAsync ? "undefined" : result.status;
   const response = {
@@ -948,21 +642,15 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
   };
 
   await store.save(paymentId, {
-    paymentId,
-    status,
-    response,
-    callbackUrl,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    paymentId, status, response, callbackUrl,
+    createdAt: new Date(), updatedAt: new Date(),
   });
 
   res.status(200).json(response);
 }
 ```
 
-### Step 3: Implement Idempotent Cancel/Capture/Refund with requestId
-
-Guard operations using `requestId` and enforce valid state transitions.
+Idempotent Cancel with `requestId` guard and state validation:
 
 ```typescript
 async function cancelPaymentHandler(req: Request, res: Response): Promise<void> {
@@ -978,30 +666,12 @@ async function cancelPaymentHandler(req: Request, res: Response): Promise<void> 
 
   // State machine validation
   const payment = await store.findByPaymentId(paymentId);
-  if (!payment) {
-    res.status(404).json({ error: "Payment not found" });
-    return;
-  }
-
-  if (payment.status === "cancelled") {
-    // Already cancelled — return success idempotently
-    const response = {
-      paymentId,
-      cancellationId: null,
-      code: "already-cancelled",
-      message: "Payment was already cancelled",
-      requestId,
-    };
-    res.status(200).json(response);
-    return;
-  }
-
-  if (!["undefined", "approved"].includes(payment.status)) {
+  if (!payment || !["undefined", "approved"].includes(payment.status)) {
     res.status(200).json({
       paymentId,
       cancellationId: null,
       code: "cancel-failed",
-      message: `Cannot cancel payment in ${payment.status} state`,
+      message: `Cannot cancel payment in ${payment?.status ?? "unknown"} state`,
       requestId,
     });
     return;
@@ -1018,197 +688,38 @@ async function cancelPaymentHandler(req: Request, res: Response): Promise<void> 
 
   await store.updateStatus(paymentId, "cancelled");
   await store.saveOperation(requestId, {
-    requestId,
-    paymentId,
-    operation: "cancel",
-    response,
-    createdAt: new Date(),
+    requestId, paymentId, operation: "cancel", response, createdAt: new Date(),
   });
 
   res.status(200).json(response);
 }
 ```
 
-### Complete Example
+## Common failure modes
 
-Full idempotent payment lifecycle with state machine:
+- **Processing duplicate payments** — Calling the acquirer for every Create Payment request without checking if the `paymentId` already exists. The Gateway retries `undefined` payments for up to 7 days, so a single $100 payment can result in hundreds of duplicate charges.
+- **Synchronous approval of async payment methods** — Returning `status: "approved"` immediately for Boleto or Pix before the customer has actually paid. The order ships without payment collected.
+- **Losing state between retries** — Storing payment state in memory (`Map`, local variable) instead of a persistent database. On process restart, all state is lost and the next retry creates a duplicate charge.
+- **Generating new identifiers for duplicate requests** — Returning different `tid`, `nsu`, or `authorizationId` values when the Gateway retries with the same `paymentId`. This breaks Gateway reconciliation and can cause double settlements.
+- **Ignoring requestId on Cancel/Capture/Refund** — Not checking `requestId` before processing operations, causing duplicate cancellations or refunds when the Gateway retries.
 
-```typescript
-import express, { Request, Response } from "express";
+## Review checklist
 
-const app = express();
-app.use(express.json());
+- [ ] Does the Create Payment handler check the data store for an existing `paymentId` before calling the acquirer?
+- [ ] Are stored responses returned verbatim for duplicate `paymentId` requests?
+- [ ] Do Cancel, Capture, and Refund handlers check for existing `requestId` before processing?
+- [ ] Is the payment state machine enforced (e.g., cannot capture a cancelled payment)?
+- [ ] Do async payment methods (Boleto, Pix) return `status: "undefined"` instead of `"approved"`?
+- [ ] Is payment state stored in a persistent database (not in-memory)?
+- [ ] Are `delayToCancel` values extended for async methods (e.g., 604800 seconds = 7 days)?
 
-const store = new PaymentStore();
+## Related skills
 
-// Create Payment — idempotent on paymentId
-app.post("/payments", async (req: Request, res: Response) => {
-  const { paymentId, paymentMethod, callbackUrl } = req.body;
-
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json(existing.response);
-    return;
-  }
-
-  const isAsync = ["BankInvoice", "Pix"].includes(paymentMethod);
-  const result = await acquirer.process(req.body);
-  const status = isAsync ? "undefined" : result.status;
-
-  const response = buildCreatePaymentResponse(paymentId, status, result, isAsync);
-  await store.save(paymentId, {
-    paymentId, status, response, callbackUrl,
-    createdAt: new Date(), updatedAt: new Date(),
-  });
-
-  res.status(200).json(response);
-});
-
-// Cancel — idempotent on requestId, validates state
-app.post("/payments/:paymentId/cancellations", async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-  const { requestId } = req.body;
-
-  const existingOp = await store.findOperation(requestId);
-  if (existingOp) { res.status(200).json(existingOp.response); return; }
-
-  const payment = await store.findByPaymentId(paymentId);
-  if (!payment || !["undefined", "approved"].includes(payment.status)) {
-    res.status(200).json({ paymentId, cancellationId: null, code: "cancel-failed", message: "Invalid state", requestId });
-    return;
-  }
-
-  const result = await acquirer.cancel(paymentId);
-  const response = { paymentId, cancellationId: result.cancellationId ?? null, code: null, message: "Cancelled", requestId };
-  await store.updateStatus(paymentId, "cancelled");
-  await store.saveOperation(requestId, { requestId, paymentId, operation: "cancel", response, createdAt: new Date() });
-  res.status(200).json(response);
-});
-
-// Capture — idempotent on requestId, validates state
-app.post("/payments/:paymentId/settlements", async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-  const { requestId, value } = req.body;
-
-  const existingOp = await store.findOperation(requestId);
-  if (existingOp) { res.status(200).json(existingOp.response); return; }
-
-  const payment = await store.findByPaymentId(paymentId);
-  if (!payment || payment.status !== "approved") {
-    res.status(200).json({ paymentId, settleId: null, value: 0, code: "capture-failed", message: "Invalid state", requestId });
-    return;
-  }
-
-  const result = await acquirer.capture(paymentId, value);
-  const response = { paymentId, settleId: result.settleId ?? null, value: result.capturedValue ?? value, code: null, message: null, requestId };
-  await store.updateStatus(paymentId, "settled");
-  await store.saveOperation(requestId, { requestId, paymentId, operation: "capture", response, createdAt: new Date() });
-  res.status(200).json(response);
-});
-
-// Refund — idempotent on requestId, validates state
-app.post("/payments/:paymentId/refunds", async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-  const { requestId, value, settleId } = req.body;
-
-  const existingOp = await store.findOperation(requestId);
-  if (existingOp) { res.status(200).json(existingOp.response); return; }
-
-  const payment = await store.findByPaymentId(paymentId);
-  if (!payment || payment.status !== "settled") {
-    res.status(200).json({ paymentId, refundId: null, value: 0, code: "refund-failed", message: "Invalid state", requestId });
-    return;
-  }
-
-  const result = await acquirer.refund(paymentId, value);
-  const response = { paymentId, refundId: result.refundId ?? null, value: result.refundedValue ?? value, code: null, message: null, requestId };
-  await store.updateStatus(paymentId, "refunded");
-  await store.saveOperation(requestId, { requestId, paymentId, operation: "refund", response, createdAt: new Date() });
-  res.status(200).json(response);
-});
-
-app.listen(443);
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Processing Duplicate Payments
-
-**What happens**: The connector calls the acquirer for every Create Payment request without checking if the `paymentId` already exists in the data store.
-
-**Why it fails**: The Gateway retries `undefined` payments for up to 7 days. Each retry creates a new charge at the acquirer. A single $100 payment can result in hundreds of charges totaling thousands of dollars. This is a critical financial bug.
-
-**Fix**: Always check the data store before calling the acquirer:
-
-```typescript
-async function createPaymentHandler(req: Request, res: Response): Promise<void> {
-  const { paymentId } = req.body;
-
-  // ALWAYS check for existing payment first
-  const existing = await store.findByPaymentId(paymentId);
-  if (existing) {
-    res.status(200).json(existing.response);
-    return;
-  }
-
-  // Only call acquirer for genuinely new payments
-  const result = await acquirer.process(req.body);
-  // ... store and return response
-}
-```
-
----
-
-### Anti-Pattern: Synchronous Approval of Async Payment Methods
-
-**What happens**: The connector returns `status: "approved"` immediately for Boleto or Pix payments, before the customer has actually paid.
-
-**Why it fails**: The Gateway treats `approved` as confirmed payment. The order is released for fulfillment, but no money was collected. The merchant ships products for free. Revenue is lost.
-
-**Fix**: Return `status: "undefined"` for async methods and use the callback mechanism:
-
-```typescript
-const isAsync = ["BankInvoice", "Pix"].includes(paymentMethod);
-const status = isAsync ? "undefined" : result.status;
-// Async methods: notify via callbackUrl when payment is confirmed
-```
-
----
-
-### Anti-Pattern: Losing State Between Retries
-
-**What happens**: The connector stores payment state in memory (e.g., a JavaScript `Map` or local variable) instead of a persistent database.
-
-**Why it fails**: When the connector process restarts (deploy, crash, scaling), all in-memory state is lost. The next Gateway retry creates a duplicate payment at the acquirer because the idempotency check fails to find the original record.
-
-**Fix**: Use a persistent data store:
-
-```typescript
-// WRONG — in-memory, lost on restart
-const payments = new Map<string, PaymentRecord>();
-
-// CORRECT — persistent database
-import { Pool } from "pg";
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-async function findByPaymentId(paymentId: string): Promise<PaymentRecord | null> {
-  const result = await pool.query(
-    "SELECT * FROM payments WHERE payment_id = $1",
-    [paymentId]
-  );
-  return result.rows[0] ?? null;
-}
-
-// For VTEX IO apps, use VBase:
-// const vbase = ctx.clients.vbase;
-// await vbase.getJSON<PaymentRecord>("payments", paymentId);
-```
+- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
+- [`payment-async-flow`](../payment-async-flow/skill.md) — Callback URL notification and the 7-day retry window
+- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance and Secure Proxy
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Implementing a Payment Provider](https://developers.vtex.com/docs/guides/payments-integration-implementing-a-payment-provider) — Official guide explaining idempotency requirements for Cancel, Capture, and Refund operations
 - [Developing a Payment Connector for VTEX](https://help.vtex.com/en/docs/tutorials/developing-a-payment-connector-for-vtex) — Help Center guide with idempotency implementation steps using paymentId and VBase
@@ -1222,80 +733,41 @@ This skill provides guidance for AI agents working with VTEX Payment Connector D
 
 # PCI Compliance & Secure Proxy
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: PCI DSS compliance requirements and the VTEX Secure Proxy mechanism for payment connectors that handle card payments. This includes how `secureProxyUrl` tokenizes sensitive card data, the difference between PCI-certified and non-PCI environments, what data can and cannot be stored or logged, and how to use the `X-PROVIDER-Forward-To` header to route requests through the Secure Proxy to the acquirer.
+Use this skill when:
+- Building a payment connector that accepts credit cards, debit cards, or co-branded cards
+- The connector needs to process card data or communicate with an acquirer
+- Determining whether Secure Proxy is required for the hosting environment
+- Auditing a connector for PCI DSS compliance (data storage, logging, transmission)
 
-**When to use it**: When building a payment connector that accepts credit cards, debit cards, or co-branded cards. Use this skill whenever the connector needs to process card data, communicate with an acquirer, or when determining whether Secure Proxy is required.
+Do not use this skill for:
+- PPP endpoint contracts and response shapes — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
+- Idempotency and duplicate prevention — use [`payment-idempotency`](../payment-idempotency/skill.md)
+- Async payment flows (Boleto, Pix) and callbacks — use [`payment-async-flow`](../payment-async-flow/skill.md)
 
-**What you'll learn**:
-- When Secure Proxy is required vs optional
-- How tokenized card data flows through the Secure Proxy
-- What data must never be stored, logged, or transmitted outside the Secure Proxy
-- How to use `X-PROVIDER-Forward-To` and custom headers to communicate with acquirers
+## Decision rules
 
-## Key Concepts
+- If the connector is hosted in a non-PCI environment (including all VTEX IO apps), it MUST use Secure Proxy.
+- If the connector has PCI DSS certification (AOC signed by a QSA), it can call the acquirer directly with raw card data.
+- Check for `secureProxyUrl` in the Create Payment request — if present, Secure Proxy is active and MUST be used.
+- Card tokens (`numberToken`, `holderToken`, `cscToken`) are only valid when sent through the `secureProxyUrl` — the proxy replaces them with real data before forwarding to the acquirer.
+- Only `card.bin` (first 6 digits), `card.numberLength`, and `card.expiration` may be stored. Everything else is forbidden.
+- Card data must never appear in logs, databases, files, caches, error trackers, or APM tools — even in development.
 
-**Essential knowledge before implementation**:
+## Hard constraints
 
-### Concept 1: PCI DSS and VTEX
+### Constraint: MUST use secureProxyUrl for non-PCI environments
 
-PCI DSS (Payment Card Industry Data Security Standard) is an international standard governing how companies must process card information. VTEX's Payment Gateway is PCI-certified. Connectors that process card payments must either:
+If the connector is hosted in a non-PCI environment (including all VTEX IO apps), it MUST use the `secureProxyUrl` from the Create Payment request to communicate with the acquirer. It MUST NOT call the acquirer directly with raw card data. If a `secureProxyUrl` field is present in the request, Secure Proxy is active and MUST be used.
 
-1. **Have PCI DSS certification** (AOC signed by a QSA) — the connector receives raw card data directly and communicates with the acquirer.
-2. **Use Secure Proxy** — mandatory for non-PCI environments, including all VTEX IO connectors. The connector receives tokenized card data and routes acquirer calls through the Gateway's proxy.
+**Why this matters**
+Non-PCI environments are not authorized to handle raw card data. Calling the acquirer directly bypasses the Gateway's secure data handling, violating PCI DSS. This can result in data breaches, massive fines ($100K+ per month), loss of card processing ability, and legal liability.
 
-### Concept 2: Secure Proxy Tokenization
+**Detection**
+If the connector calls an acquirer endpoint directly (without going through `secureProxyUrl`) when `secureProxyUrl` is present in the request, STOP immediately. All acquirer communication must go through the Secure Proxy.
 
-When Secure Proxy is used, the Gateway replaces sensitive card fields with tokens in the Create Payment request:
-
-- `card.numberToken` replaces the card number (e.g., `#vtex#token#d799bae#number#`)
-- `card.holderToken` replaces the cardholder name
-- `card.cscToken` replaces the CVV/security code
-- `card.bin` and `card.numberLength` are provided as plain values (non-sensitive)
-- `card.expiration` is provided as plain values
-
-The connector uses these tokens when building the request to the acquirer. The Secure Proxy replaces tokens with real values before forwarding to the acquirer.
-
-### Concept 3: secureProxyUrl
-
-The `secureProxyUrl` field is included in the Create Payment request body when Secure Proxy is active. This URL points to the Gateway's proxy endpoint. The connector must POST to this URL (instead of directly to the acquirer) with:
-
-- `X-PROVIDER-Forward-To` header: the acquirer's API endpoint URL
-- `X-PROVIDER-Forward-{HeaderName}` headers: custom headers for the acquirer (prefix is stripped by the proxy)
-- Request body containing tokenized card data
-
-The Secure Proxy replaces tokens with real card data and forwards the request to the acquirer. The response is passed back to the connector unchanged.
-
-### Concept 4: What Can and Cannot Be Stored
-
-**Can store**: `card.bin` (first 6 digits), `card.numberLength`, `card.expiration`, transaction IDs, payment status.
-
-**MUST NEVER store**: Full card number (PAN), CVV/CSC, cardholder name from card data, any token values. These must only exist in memory during request processing and must never be written to databases, files, or logs.
-
-**Architecture/Data Flow (Secure Proxy)**:
-
-```text
-1. Gateway → POST /payments (with secureProxyUrl + tokenized card data) → Connector
-2. Connector → POST secureProxyUrl (tokens in body, X-PROVIDER-Forward-To: acquirer URL) → Gateway
-3. Gateway replaces tokens with real card data → POST acquirer URL → Acquirer
-4. Acquirer → response → Gateway → Connector
-5. Connector → Create Payment response → Gateway
-```
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: MUST Use secureProxyUrl for Non-PCI Environments
-
-**Rule**: If the connector is hosted in a non-PCI environment (including all VTEX IO apps), it MUST use the `secureProxyUrl` from the Create Payment request to communicate with the acquirer. It MUST NOT call the acquirer directly with raw card data. If a `secureProxyUrl` field is present in the request, Secure Proxy is active and MUST be used.
-
-**Why**: Non-PCI environments are not authorized to handle raw card data. Calling the acquirer directly bypasses the Gateway's secure data handling, violating PCI DSS. This can result in data breaches, massive fines ($100K+ per month), loss of card processing ability, and legal liability.
-
-**Detection**: If the connector calls an acquirer endpoint directly (without going through `secureProxyUrl`) when `secureProxyUrl` is present in the request, STOP immediately. All acquirer communication must go through the Secure Proxy.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, secureProxyUrl, card } = req.body;
@@ -1328,7 +800,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, secureProxyUrl, card } = req.body;
@@ -1358,17 +830,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST NOT store raw card data
 
-### Constraint: MUST NOT Store Raw Card Data
+The connector MUST NOT store the full card number (PAN), CVV/CSC, cardholder name, or any card token values in any persistent storage — database, file system, cache, session store, or any other durable medium. Card data must only exist in memory during the request lifecycle.
 
-**Rule**: The connector MUST NOT store the full card number (PAN), CVV/CSC, cardholder name, or any card token values in any persistent storage — database, file system, cache, session store, or any other durable medium. Card data must only exist in memory during the request lifecycle.
+**Why this matters**
+Storing raw card data violates PCI DSS Requirement 3. A data breach exposes customers to fraud. Consequences include fines of $5,000–$100,000 per month from card networks, mandatory forensic investigation costs ($50K+), loss of ability to process cards, class-action lawsuits, and criminal liability in some jurisdictions.
 
-**Why**: Storing raw card data violates PCI DSS Requirement 3. A data breach exposes customers to fraud. Consequences include fines of $5,000–$100,000 per month from card networks, mandatory forensic investigation costs ($50K+), loss of ability to process cards, class-action lawsuits, and criminal liability in some jurisdictions.
+**Detection**
+If the code writes card number, CVV, cardholder name, or token values to a database, file, cache (Redis, VBase), or any persistent store, STOP immediately. Only `card.bin` (first 6 digits) and `card.numberLength` may be stored.
 
-**Detection**: If the code writes card number, CVV, cardholder name, or token values to a database, file, cache (Redis, VBase), or any persistent store, STOP immediately. Only `card.bin` (first 6 digits) and `card.numberLength` may be stored.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, card, secureProxyUrl } = req.body;
@@ -1391,7 +863,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, card } = req.body;
@@ -1410,17 +882,17 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: MUST NOT log sensitive card data
 
-### Constraint: MUST NOT Log Sensitive Card Data
+The connector MUST NOT log card numbers, CVV/CSC values, cardholder names, or token values to any logging system — console, file, monitoring service, error tracker, or APM tool. Even in debug mode. Even in development.
 
-**Rule**: The connector MUST NOT log card numbers, CVV/CSC values, cardholder names, or token values to any logging system — console, file, monitoring service, error tracker, or APM tool. Even in debug mode. Even in development.
+**Why this matters**
+Logs are typically stored in plaintext, retained for extended periods, and accessible to many team members. Card data in logs is a PCI DSS violation and a data breach. Log aggregation services (Datadog, Splunk, CloudWatch) may store data across multiple regions, amplifying the breach scope.
 
-**Why**: Logs are typically stored in plaintext, retained for extended periods, and accessible to many team members. Card data in logs is a PCI DSS violation and a data breach. Log aggregation services (Datadog, Splunk, CloudWatch) may store data across multiple regions, amplifying the breach scope.
+**Detection**
+If the code contains `console.log`, `console.error`, `logger.info`, `logger.debug`, or any logging call that includes `card.number`, `card.csc`, `card.holder`, `card.numberToken`, `card.holderToken`, `card.cscToken`, or the full request body without redaction, STOP immediately. Redact or omit all sensitive fields before logging.
 
-**Detection**: If the code contains `console.log`, `console.error`, `logger.info`, `logger.debug`, or any logging call that includes `card.number`, `card.csc`, `card.holder`, `card.numberToken`, `card.holderToken`, `card.cscToken`, or the full request body without redaction, STOP immediately. Redact or omit all sensitive fields before logging.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   const { paymentId, card, paymentMethod, value } = req.body;
@@ -1453,7 +925,7 @@ function redactSensitiveFields(body: Record<string, unknown>): Record<string, un
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
   // CRITICAL PCI VIOLATION: Logging the entire request body
@@ -1470,13 +942,19 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Secure Proxy data flow:
 
-### Step 1: Detect Secure Proxy Mode
+```text
+1. Gateway → POST /payments (with secureProxyUrl + tokenized card data) → Connector
+2. Connector → POST secureProxyUrl (tokens in body, X-PROVIDER-Forward-To: acquirer URL) → Gateway
+3. Gateway replaces tokens with real card data → POST acquirer URL → Acquirer
+4. Acquirer → response → Gateway → Connector
+5. Connector → Create Payment response → Gateway
+```
 
-Check for `secureProxyUrl` in the Create Payment request to determine if Secure Proxy is active.
+Detect Secure Proxy mode:
 
 ```typescript
 interface CreatePaymentRequest {
@@ -1506,25 +984,10 @@ function isSecureProxyActive(req: CreatePaymentRequest): boolean {
 }
 ```
 
-### Step 2: Build the Acquirer Request with Tokens
-
-When Secure Proxy is active, use tokenized card values in the request body sent to the proxy.
+Build acquirer request using tokens or raw values:
 
 ```typescript
-interface AcquirerPaymentRequest {
-  merchantOrderId: string;
-  payment: {
-    cardNumber: string;
-    holder: string;
-    securityCode: string;
-    expirationDate: string;
-    amount: number;
-  };
-}
-
-function buildAcquirerRequest(
-  paymentReq: CreatePaymentRequest
-): AcquirerPaymentRequest {
+function buildAcquirerRequest(paymentReq: CreatePaymentRequest) {
   const card = paymentReq.card!;
 
   return {
@@ -1541,14 +1004,12 @@ function buildAcquirerRequest(
 }
 ```
 
-### Step 3: Call the Acquirer Through Secure Proxy
-
-Route the request through `secureProxyUrl` with proper headers.
+Call acquirer through Secure Proxy with proper headers:
 
 ```typescript
 async function callAcquirerViaProxy(
   secureProxyUrl: string,
-  acquirerRequest: AcquirerPaymentRequest
+  acquirerRequest: object
 ): Promise<AcquirerResponse> {
   const response = await fetch(secureProxyUrl, {
     method: "POST",
@@ -1573,9 +1034,7 @@ async function callAcquirerViaProxy(
 }
 
 // For PCI-certified environments, call acquirer directly
-async function callAcquirerDirect(
-  acquirerRequest: AcquirerPaymentRequest
-): Promise<AcquirerResponse> {
+async function callAcquirerDirect(acquirerRequest: object): Promise<AcquirerResponse> {
   const response = await fetch(process.env.ACQUIRER_API_URL!, {
     method: "POST",
     headers: {
@@ -1591,160 +1050,7 @@ async function callAcquirerDirect(
 }
 ```
 
-### Complete Example
-
-Full Create Payment handler with Secure Proxy support and safe logging:
-
-```typescript
-import express, { Request, Response } from "express";
-
-const app = express();
-app.use(express.json());
-
-app.post("/payments", async (req: Request, res: Response) => {
-  const body: CreatePaymentRequest = req.body;
-  const { paymentId, card, secureProxyUrl } = body;
-
-  // Safe logging — no card data
-  console.log("Payment request", {
-    paymentId,
-    paymentMethod: body.paymentMethod,
-    value: body.value,
-    hasSecureProxy: !!secureProxyUrl,
-    cardBin: card?.bin,
-  });
-
-  // Store only non-sensitive data
-  await paymentStore.save(paymentId, {
-    paymentId,
-    cardBin: card?.bin,
-    cardNumberLength: card?.numberLength,
-    status: "processing",
-    callbackUrl: body.callbackUrl,
-  });
-
-  // Build the acquirer request using tokens or raw data
-  const acquirerRequest = buildAcquirerRequest(body);
-
-  let acquirerResult: AcquirerResponse;
-  try {
-    if (secureProxyUrl) {
-      // Non-PCI: Route through Secure Proxy
-      acquirerResult = await callAcquirerViaProxy(secureProxyUrl, acquirerRequest);
-    } else {
-      // PCI-certified: Call acquirer directly
-      acquirerResult = await callAcquirerDirect(acquirerRequest);
-    }
-  } catch (error) {
-    // Safe error logging — never log the acquirer request (contains tokens)
-    console.error("Acquirer call failed", {
-      paymentId,
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
-
-    const failResponse = {
-      paymentId,
-      status: "undefined" as const,
-      authorizationId: null,
-      nsu: null,
-      tid: null,
-      acquirer: null,
-      code: "ACQUIRER_ERROR",
-      message: "Failed to communicate with acquirer",
-      delayToAutoSettle: 21600,
-      delayToAutoSettleAfterAntifraud: 1800,
-      delayToCancel: 21600,
-    };
-
-    await paymentStore.updateStatus(paymentId, "undefined");
-    res.status(200).json(failResponse);
-    return;
-  }
-
-  const status = acquirerResult.approved ? "approved" : "denied";
-  const response = {
-    paymentId,
-    status,
-    authorizationId: acquirerResult.authorizationId ?? null,
-    nsu: acquirerResult.nsu ?? null,
-    tid: acquirerResult.tid ?? null,
-    acquirer: "MyAcquirer",
-    code: acquirerResult.code ?? null,
-    message: acquirerResult.message ?? null,
-    delayToAutoSettle: 21600,
-    delayToAutoSettleAfterAntifraud: 1800,
-    delayToCancel: 21600,
-  };
-
-  await paymentStore.updateStatus(paymentId, status);
-  res.status(200).json(response);
-});
-
-app.listen(443);
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Direct Card Handling in Non-PCI Environment
-
-**What happens**: The connector is hosted on VTEX IO or a non-PCI server but calls the acquirer API directly without using the Secure Proxy, attempting to pass card tokens directly to the acquirer.
-
-**Why it fails**: The acquirer receives tokens (e.g., `#vtex#token#d799bae#number#`) instead of real card numbers. The acquirer cannot process these tokens and rejects the transaction. Even if the connector somehow received raw card data, transmitting it from a non-PCI environment violates PCI DSS and exposes the data to interception.
-
-**Fix**: Always check for `secureProxyUrl` and route through the proxy:
-
-```typescript
-if (secureProxyUrl) {
-  // Route through Secure Proxy — tokens are replaced with real data by the Gateway
-  const result = await fetch(secureProxyUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-PROVIDER-Forward-To": "https://api.acquirer.com/v2/payments",
-      "X-PROVIDER-Forward-MerchantId": process.env.MERCHANT_ID!,
-    },
-    body: JSON.stringify(acquirerPayload),
-  });
-}
-```
-
----
-
-### Anti-Pattern: Storing Full Card Numbers (PANs)
-
-**What happens**: The developer stores the full card number in a database column for "reference" or "reconciliation" purposes.
-
-**Why it fails**: This is a direct PCI DSS Requirement 3 violation. If the database is breached, all stored card numbers are compromised. Card networks impose fines of $5,000–$100,000 per month, require a mandatory forensic audit, and may permanently revoke the ability to process card payments.
-
-**Fix**: Store only the BIN (first 6 digits) and last 4 digits for reference:
-
-```typescript
-// Store only non-sensitive identifiers
-await database.query(
-  `INSERT INTO payments (payment_id, card_bin, card_last_four, card_exp_month, card_exp_year)
-   VALUES ($1, $2, $3, $4, $5)`,
-  [
-    paymentId,
-    card.bin,                                    // First 6 digits — safe
-    card.bin ? undefined : undefined,            // Last 4 not available via PPP
-    card.expiration.month,
-    card.expiration.year,
-  ]
-);
-// NEVER store: card.number, card.numberToken, card.csc, card.cscToken, card.holder, card.holderToken
-```
-
----
-
-### Anti-Pattern: Logging Card Details for Debugging
-
-**What happens**: During development or debugging, the developer adds `console.log(req.body)` or `console.log(card)` to troubleshoot payment issues, then forgets to remove it before deployment.
-
-**Why it fails**: The full request body contains card numbers, CVV, and/or token values. These end up in log files, monitoring dashboards, and log aggregation services. This is a PCI DSS violation even in development if the logs are stored persistently. In production, it's a full data breach.
-
-**Fix**: Create a utility that redacts sensitive fields and use it consistently:
+Safe logging utility:
 
 ```typescript
 function safePaymentLog(label: string, body: Record<string, unknown>): void {
@@ -1762,15 +1068,34 @@ function safePaymentLog(label: string, body: Record<string, unknown>): void {
 
   console.log(label, JSON.stringify(safe));
 }
-
-// Usage
-safePaymentLog("Create payment request", req.body);
-// Output: Create payment request {"paymentId":"ABC","paymentMethod":"Visa","value":100,"cardBin":"555544",...}
 ```
 
-## Reference
+## Common failure modes
 
-**Links to VTEX documentation and related resources.**
+- **Direct card handling in non-PCI environment** — Calling the acquirer API directly without using the Secure Proxy. The acquirer receives tokens (e.g., `#vtex#token#d799bae#number#`) instead of real card numbers and rejects the transaction. Even if raw data were available, transmitting it from a non-PCI environment is a PCI DSS violation.
+- **Storing full card numbers (PANs)** — Persisting the full card number in a database for "reference" or "reconciliation". A single breach of this data can result in $100K/month fines, mandatory forensic audits, and permanent loss of card processing ability.
+- **Logging card details for debugging** — Adding `console.log(req.body)` or `console.log(card)` to troubleshoot payment issues and forgetting to remove it. Card data ends up in log files, monitoring dashboards, and log aggregation services. This is a PCI violation even in development.
+- **Stripping X-PROVIDER-Forward headers** — Sending requests to the Secure Proxy without the `X-PROVIDER-Forward-To` header. The proxy does not know where to forward the request and returns an error.
+- **Storing token values** — Writing `card.numberToken`, `card.holderToken`, or `card.cscToken` to a database or cache, treating them as "safe" because they are tokens. Tokens reference real card data and must not be persisted.
+
+## Review checklist
+
+- [ ] Does the connector use `secureProxyUrl` when it is present in the request?
+- [ ] Is `X-PROVIDER-Forward-To` set to the acquirer's API URL in Secure Proxy calls?
+- [ ] Are custom acquirer headers prefixed with `X-PROVIDER-Forward-` when going through the proxy?
+- [ ] Is only `card.bin`, `card.numberLength`, and `card.expiration` stored in the database?
+- [ ] Are card numbers, CVV, holder names, and token values excluded from all log statements?
+- [ ] Is there a redaction utility for safely logging payment request data?
+- [ ] Does the connector support both Secure Proxy (non-PCI) and direct (PCI-certified) modes?
+- [ ] Are error responses logged without including the acquirer request body (which contains tokens)?
+
+## Related skills
+
+- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
+- [`payment-idempotency`](../payment-idempotency/skill.md) — `paymentId`/`requestId` idempotency and state machine
+- [`payment-async-flow`](../payment-async-flow/skill.md) — Async payment methods, callbacks, and the 7-day retry window
+
+## Reference
 
 - [Secure Proxy](https://developers.vtex.com/docs/guides/payments-integration-secure-proxy) — Complete Secure Proxy documentation including flow diagrams, request/response examples, custom tokens, and supported JsonLogic operators
 - [PCI DSS Compliance](https://developers.vtex.com/docs/guides/payments-integration-pci-dss-compliance) — PCI certification requirements, AOC submission process, and when Secure Proxy is mandatory
@@ -1785,67 +1110,40 @@ This skill provides guidance for AI agents working with VTEX Payment Connector D
 
 # PPP Endpoint Implementation
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The complete set of nine endpoints required by the VTEX Payment Provider Protocol (PPP). This includes six payment-flow endpoints (Manifest, Create Payment, Cancel Payment, Capture/Settle Payment, Refund Payment, Inbound Request) and three configuration-flow endpoints (Create Authorization Token, Provider Authentication Redirect, Get Credentials).
+Use this skill when:
+- Building a new payment connector middleware that integrates a PSP with the VTEX Payment Gateway
+- Implementing, debugging, or extending any of the 9 PPP endpoints
+- Preparing a connector for VTEX Payment Provider Test Suite homologation
 
-**When to use it**: When building a new payment connector middleware that integrates a Payment Service Provider (PSP) with the VTEX Payment Gateway. Use this skill whenever you need to implement, debug, or extend PPP endpoints.
+Do not use this skill for:
+- Idempotency and duplicate prevention logic — use [`payment-idempotency`](../payment-idempotency/skill.md)
+- Async payment flows and callback URLs — use [`payment-async-flow`](../payment-async-flow/skill.md)
+- PCI compliance and Secure Proxy card handling — use [`payment-pci-security`](../payment-pci-security/skill.md)
 
-**What you'll learn**:
-- The exact HTTP method, path, request body, and response shape for all 9 PPP endpoints
-- Required response fields and status codes for each endpoint
-- How the payment flow and configuration flow interact with the VTEX Gateway
-- Constraints that prevent homologation failures and runtime errors
+## Decision rules
 
-## Key Concepts
+- The connector MUST implement all 6 payment-flow endpoints: Manifest, Create Payment, Cancel, Capture/Settle, Refund, Inbound Request.
+- The configuration flow (3 endpoints: Create Auth Token, Provider Auth Redirect, Get Credentials) is optional but recommended for merchant onboarding.
+- All endpoints must be served over HTTPS on port 443 with TLS 1.2.
+- The connector must respond in under 5 seconds during homologation tests and under 20 seconds in production.
+- The provider must be PCI-DSS certified or use Secure Proxy for card payments.
+- The Gateway initiates all calls. The middleware never calls the Gateway except via `callbackUrl` (async notifications) and Secure Proxy (card data forwarding).
 
-**Essential knowledge before implementation**:
+## Hard constraints
 
-### Concept 1: Payment Provider Protocol (PPP)
+### Constraint: Implement all required payment flow endpoints
 
-The PPP is the public contract between a payment provider and the VTEX Payment Gateway. It defines nine REST endpoints that the connector middleware must implement. The Gateway calls these endpoints to authorize, capture, cancel, and refund payments, as well as to configure merchant credentials. The middleware can be written in any language but must be served over HTTPS on port 443 with TLS 1.2 support.
+The connector MUST implement all six payment-flow endpoints: GET `/manifest`, POST `/payments`, POST `/payments/{paymentId}/cancellations`, POST `/payments/{paymentId}/settlements`, POST `/payments/{paymentId}/refunds`, and POST `/payments/{paymentId}/inbound-request/{action}`.
 
-### Concept 2: Payment Flow vs Configuration Flow
+**Why this matters**
+The VTEX Payment Provider Test Suite validates every endpoint during homologation. Missing endpoints cause test failures and the connector will not be approved. At runtime, the Gateway expects all endpoints — a missing cancel endpoint means payments cannot be voided.
 
-The protocol is divided into two flows:
+**Detection**
+If the connector router/handler file does not define handlers for all 6 payment-flow paths, STOP and add the missing endpoints before proceeding.
 
-- **Payment Flow** (6 endpoints): Handles runtime payment operations — listing capabilities (Manifest), creating payments, cancelling, capturing/settling, refunding, and inbound requests.
-- **Configuration Flow** (3 endpoints): Handles merchant onboarding — creating auth tokens, redirecting the merchant to the provider's login, and returning credentials (`appKey`, `appToken`, `applicationId`) to VTEX.
-
-The configuration flow is optional but recommended. The payment flow is mandatory.
-
-### Concept 3: Endpoint Requirements
-
-All endpoints must satisfy these requirements:
-- Served over HTTPS on port 443 with TLS 1.2
-- Use a standard subdomain/domain (no IP addresses)
-- Respond in under 5 seconds during homologation tests
-- Respond in under 20 seconds in production
-- The provider must be PCI-DSS certified or use Secure Proxy for card payments
-
-**Architecture/Data Flow**:
-
-```text
-Shopper → VTEX Checkout → VTEX Payment Gateway → [Your Connector Middleware] → Acquirer/PSP
-                                ↕
-                    Configuration Flow (Admin)
-```
-
-The Gateway initiates all calls. Your middleware never calls the Gateway except via `callbackUrl` (for async notifications) and Secure Proxy (for card data forwarding).
-
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
-
-### Constraint: Implement All Required Payment Flow Endpoints
-
-**Rule**: The connector MUST implement all six payment-flow endpoints: GET `/manifest`, POST `/payments`, POST `/payments/{paymentId}/cancellations`, POST `/payments/{paymentId}/settlements`, POST `/payments/{paymentId}/refunds`, and POST `/payments/{paymentId}/inbound-request/{action}`.
-
-**Why**: The VTEX Payment Provider Test Suite validates every endpoint during homologation. Missing endpoints cause test failures and the connector will not be approved. At runtime, the Gateway expects all endpoints to be available — a missing cancel endpoint means payments cannot be voided.
-
-**Detection**: If the connector router/handler file does not define handlers for all 6 payment-flow paths, STOP and add the missing endpoints before proceeding.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 import { Router } from "express";
 
@@ -1862,7 +1160,7 @@ router.post("/payments/:paymentId/inbound-request/:action", inboundRequestHandle
 export default router;
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 import { Router } from "express";
 
@@ -1877,17 +1175,17 @@ router.post("/payments/:paymentId/settlements", capturePaymentHandler);
 export default router;
 ```
 
----
+### Constraint: Return correct HTTP status codes and response shapes
 
-### Constraint: Return Correct HTTP Status Codes and Response Shapes
+Each endpoint MUST return the exact response shape documented in the PPP API. Create Payment MUST return `paymentId`, `status`, `authorizationId`, `tid`, `nsu`, `acquirer`, `code`, `message`, `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, and `delayToCancel`. Cancel MUST return `paymentId`, `cancellationId`, `code`, `message`, `requestId`. Capture MUST return `paymentId`, `settleId`, `value`, `code`, `message`, `requestId`. Refund MUST return `paymentId`, `refundId`, `value`, `code`, `message`, `requestId`.
 
-**Rule**: Each endpoint MUST return the exact response shape documented in the PPP API. Create Payment MUST return `paymentId`, `status`, `authorizationId`, `tid`, `nsu`, `acquirer`, `code`, `message`, `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, and `delayToCancel`. Cancel MUST return `paymentId`, `cancellationId`, `code`, `message`, `requestId`. Capture MUST return `paymentId`, `settleId`, `value`, `code`, `message`, `requestId`. Refund MUST return `paymentId`, `refundId`, `value`, `code`, `message`, `requestId`.
+**Why this matters**
+The Gateway parses these fields programmatically. Missing fields cause deserialization errors and the Gateway treats the payment as failed. Incorrect `delayToAutoSettle` values cause payments to auto-cancel or auto-capture at wrong times.
 
-**Why**: The Gateway parses these fields programmatically. Missing fields cause deserialization errors, and the Gateway treats the payment as failed. Incorrect `delayToAutoSettle` values (or missing ones) cause payments to auto-cancel or auto-capture at wrong times.
+**Detection**
+If a response object is missing any of the required fields for its endpoint, STOP and add the missing fields.
 
-**Detection**: If a response object is missing any of the required fields for its endpoint, STOP and add the missing fields.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
 interface CreatePaymentResponse {
   paymentId: string;
@@ -1927,7 +1225,7 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // Missing required fields — Gateway will reject this response
 async function createPaymentHandler(req: Request, res: Response): Promise<void> {
@@ -1942,29 +1240,20 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
----
+### Constraint: Manifest must declare all supported payment methods
 
-### Constraint: Manifest Must Declare All Supported Payment Methods
+The GET `/manifest` endpoint MUST return a `paymentMethods` array listing every payment method the connector supports, with the correct `name` and `allowsSplit` configuration for each.
 
-**Rule**: The GET `/manifest` endpoint MUST return a `paymentMethods` array listing every payment method the connector supports, with the correct `name` and `allowsSplit` configuration for each.
+**Why this matters**
+The Gateway reads the manifest to determine which payment methods are available. If a method is missing, merchants cannot configure it in the VTEX Admin. An incorrect `allowsSplit` value causes split payment failures.
 
-**Why**: The Gateway reads the manifest to determine which payment methods are available for this connector. If a method is missing from the manifest, merchants cannot configure it in the VTEX Admin. The `allowsSplit` field controls revenue split behavior — an incorrect value causes split payment failures.
+**Detection**
+If the manifest handler returns an empty `paymentMethods` array or hardcodes methods the provider does not actually support, STOP and fix the manifest.
 
-**Detection**: If the manifest handler returns an empty `paymentMethods` array or hardcodes methods that the provider does not actually support, STOP and fix the manifest to match the provider's real capabilities.
-
-✅ **CORRECT**:
+**Correct**
 ```typescript
-interface PaymentMethodManifest {
-  name: string;
-  allowsSplit: "onCapture" | "onAuthorize" | "disabled";
-}
-
-interface ManifestResponse {
-  paymentMethods: PaymentMethodManifest[];
-}
-
 async function manifestHandler(_req: Request, res: Response): Promise<void> {
-  const manifest: ManifestResponse = {
+  const manifest = {
     paymentMethods: [
       { name: "Visa", allowsSplit: "onCapture" },
       { name: "Mastercard", allowsSplit: "onCapture" },
@@ -1978,7 +1267,7 @@ async function manifestHandler(_req: Request, res: Response): Promise<void> {
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
 ```typescript
 // Empty manifest — no payment methods will appear in the Admin
 async function manifestHandler(_req: Request, res: Response): Promise<void> {
@@ -1986,13 +1275,17 @@ async function manifestHandler(_req: Request, res: Response): Promise<void> {
 }
 ```
 
-## Implementation Pattern
+## Preferred pattern
 
-**The canonical, recommended way to implement this feature or pattern.**
+Architecture overview:
 
-### Step 1: Define Types for All Endpoint Contracts
+```text
+Shopper → VTEX Checkout → VTEX Payment Gateway → [Your Connector Middleware] → Acquirer/PSP
+                                ↕
+                    Configuration Flow (Admin)
+```
 
-Define TypeScript interfaces for every request and response shape. This catches missing fields at compile time.
+Recommended TypeScript interfaces for all endpoint contracts:
 
 ```typescript
 // --- Manifest ---
@@ -2040,11 +1333,6 @@ interface CreatePaymentResponse {
 }
 
 // --- Cancel Payment ---
-interface CancelPaymentRequest {
-  paymentId: string;
-  requestId: string;
-}
-
 interface CancelPaymentResponse {
   paymentId: string;
   cancellationId: string | null;
@@ -2054,13 +1342,6 @@ interface CancelPaymentResponse {
 }
 
 // --- Capture/Settle Payment ---
-interface CapturePaymentRequest {
-  paymentId: string;
-  transactionId: string;
-  value: number;
-  requestId: string;
-}
-
 interface CapturePaymentResponse {
   paymentId: string;
   settleId: string | null;
@@ -2071,14 +1352,6 @@ interface CapturePaymentResponse {
 }
 
 // --- Refund Payment ---
-interface RefundPaymentRequest {
-  paymentId: string;
-  transactionId: string;
-  settleId: string;
-  value: number;
-  requestId: string;
-}
-
 interface RefundPaymentResponse {
   paymentId: string;
   refundId: string | null;
@@ -2089,15 +1362,6 @@ interface RefundPaymentResponse {
 }
 
 // --- Inbound Request ---
-interface InboundRequest {
-  requestId: string;
-  transactionId: string;
-  paymentId: string;
-  authorizationId: string;
-  tid: string;
-  requestData: { body: string };
-}
-
 interface InboundResponse {
   requestId: string;
   paymentId: string;
@@ -2109,9 +1373,7 @@ interface InboundResponse {
 }
 ```
 
-### Step 2: Implement the Payment Flow Handlers
-
-Wire up each handler with proper error handling and response construction.
+Complete payment flow router with all 6 endpoints:
 
 ```typescript
 import { Router, Request, Response } from "express";
@@ -2119,14 +1381,13 @@ import { Router, Request, Response } from "express";
 const router = Router();
 
 router.get("/manifest", async (_req: Request, res: Response) => {
-  const manifest: ManifestResponse = {
+  res.status(200).json({
     paymentMethods: [
       { name: "Visa", allowsSplit: "onCapture" },
       { name: "Mastercard", allowsSplit: "onCapture" },
       { name: "Pix", allowsSplit: "disabled" },
     ],
-  };
-  res.status(200).json(manifest);
+  });
 });
 
 router.post("/payments", async (req: Request, res: Response) => {
@@ -2151,74 +1412,65 @@ router.post("/payments", async (req: Request, res: Response) => {
 
 router.post("/payments/:paymentId/cancellations", async (req: Request, res: Response) => {
   const { paymentId } = req.params;
-  const { requestId } = req.body as CancelPaymentRequest;
+  const { requestId } = req.body;
   const result = await cancelWithAcquirer(paymentId);
 
-  const response: CancelPaymentResponse = {
+  res.status(200).json({
     paymentId,
     cancellationId: result.cancellationId ?? null,
     code: result.code ?? null,
     message: result.message ?? "Successfully cancelled",
     requestId,
-  };
-  res.status(200).json(response);
+  });
 });
 
 router.post("/payments/:paymentId/settlements", async (req: Request, res: Response) => {
-  const body: CapturePaymentRequest = req.body;
+  const body = req.body;
   const result = await captureWithAcquirer(body.paymentId, body.value);
 
-  const response: CapturePaymentResponse = {
+  res.status(200).json({
     paymentId: body.paymentId,
     settleId: result.settleId ?? null,
     value: result.capturedValue ?? body.value,
     code: result.code ?? null,
     message: result.message ?? null,
     requestId: body.requestId,
-  };
-  res.status(200).json(response);
+  });
 });
 
 router.post("/payments/:paymentId/refunds", async (req: Request, res: Response) => {
-  const body: RefundPaymentRequest = req.body;
+  const body = req.body;
   const result = await refundWithAcquirer(body.paymentId, body.value);
 
-  const response: RefundPaymentResponse = {
+  res.status(200).json({
     paymentId: body.paymentId,
     refundId: result.refundId ?? null,
     value: result.refundedValue ?? body.value,
     code: result.code ?? null,
     message: result.message ?? null,
     requestId: body.requestId,
-  };
-  res.status(200).json(response);
+  });
 });
 
-router.post(
-  "/payments/:paymentId/inbound-request/:action",
-  async (req: Request, res: Response) => {
-    const body: InboundRequest = req.body;
-    const result = await handleInbound(body);
+router.post("/payments/:paymentId/inbound-request/:action", async (req: Request, res: Response) => {
+  const body = req.body;
+  const result = await handleInbound(body);
 
-    const response: InboundResponse = {
-      requestId: body.requestId,
-      paymentId: body.paymentId,
-      responseData: {
-        statusCode: 200,
-        contentType: "application/json",
-        content: JSON.stringify(result),
-      },
-    };
-    res.status(200).json(response);
-  }
-);
+  res.status(200).json({
+    requestId: body.requestId,
+    paymentId: body.paymentId,
+    responseData: {
+      statusCode: 200,
+      contentType: "application/json",
+      content: JSON.stringify(result),
+    },
+  });
+});
 
 export default router;
 ```
 
-### Step 3: Implement the Configuration Flow Handlers
-
-These endpoints handle merchant onboarding through the VTEX Admin.
+Configuration flow endpoints (optional, for merchant onboarding):
 
 ```typescript
 import { Router, Request, Response } from "express";
@@ -2228,20 +1480,13 @@ const configRouter = Router();
 // 1. POST /authorization/token
 configRouter.post("/authorization/token", async (req: Request, res: Response) => {
   const { applicationId, returnUrl } = req.body;
-  // applicationId is always "vtex"
   const token = await generateAuthorizationToken(applicationId, returnUrl);
-
-  res.status(200).json({
-    applicationId,
-    token,
-  });
+  res.status(200).json({ applicationId, token });
 });
 
 // 2. GET /authorization/redirect
 configRouter.get("/authorization/redirect", async (req: Request, res: Response) => {
   const { token } = req.query;
-  // Redirect to provider's OAuth/consent page
-  // After merchant approves, redirect back with authorizationCode appended to returnUrl
   const providerLoginUrl = buildProviderLoginUrl(token as string);
   res.redirect(302, providerLoginUrl);
 });
@@ -2250,7 +1495,6 @@ configRouter.get("/authorization/redirect", async (req: Request, res: Response) 
 configRouter.get("/authorization/credentials", async (req: Request, res: Response) => {
   const { authorizationCode } = req.query;
   const credentials = await exchangeCodeForCredentials(authorizationCode as string);
-
   res.status(200).json({
     applicationId: "vtex",
     appKey: credentials.appKey,
@@ -2261,111 +1505,31 @@ configRouter.get("/authorization/credentials", async (req: Request, res: Respons
 export default configRouter;
 ```
 
-### Complete Example
+## Common failure modes
 
-Tying both flows together in a single Express application:
+- **Partial endpoint implementation** — Implementing only Create Payment and Capture while skipping Manifest, Cancel, Refund, and Inbound Request. The Test Suite tests all endpoints and will fail homologation. At runtime, the Gateway cannot cancel or refund payments.
+- **Incorrect HTTP methods** — Using POST for the Manifest endpoint or GET for Create Payment. The Gateway sends specific HTTP methods; mismatched handlers return 404 or 405.
+- **Missing or zero delay values** — Omitting `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, or `delayToCancel` from the Create Payment response, or setting them to zero. This causes immediate auto-capture or auto-cancel, leading to premature settlement or lost payments.
+- **Incomplete response shapes** — Returning only `paymentId` and `status` without `authorizationId`, `tid`, `nsu`, `acquirer`, etc. The Gateway deserializes all fields and treats missing ones as failures.
 
-```typescript
-import express from "express";
-import paymentRouter from "./routes/payment";
-import configRouter from "./routes/config";
+## Review checklist
 
-const app = express();
-app.use(express.json());
+- [ ] Are all 6 payment-flow endpoints implemented (Manifest, Create Payment, Cancel, Capture, Refund, Inbound Request)?
+- [ ] Does each endpoint return the complete response shape with all required fields?
+- [ ] Does the Manifest declare all payment methods the provider actually supports?
+- [ ] Are the correct HTTP methods used (GET for Manifest, POST for everything else)?
+- [ ] Are `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, and `delayToCancel` set to sensible non-zero values?
+- [ ] Is the connector served over HTTPS on port 443 with TLS 1.2?
+- [ ] Does the connector respond within 5 seconds for test suite and 20 seconds in production?
+- [ ] Are configuration flow endpoints implemented if merchant self-onboarding is needed?
 
-// Payment flow endpoints
-app.use("/", paymentRouter);
+## Related skills
 
-// Configuration flow endpoints
-app.use("/", configRouter);
-
-// Health check
-app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
-
-const PORT = 443;
-app.listen(PORT, () => {
-  console.log(`Payment provider middleware running on port ${PORT}`);
-});
-```
-
-## Anti-Patterns
-
-**Common mistakes developers make and how to fix them.**
-
-### Anti-Pattern: Partial Endpoint Implementation
-
-**What happens**: The developer implements only Create Payment and Capture, skipping Manifest, Cancel, Refund, and Inbound Request endpoints.
-
-**Why it fails**: The VTEX Payment Provider Test Suite tests all endpoints during homologation. Missing endpoints cause immediate test failure. At runtime, the Gateway cannot cancel or refund payments, leaving merchants unable to process returns.
-
-**Fix**: Implement all six payment-flow endpoints from the start. Use the type definitions above to scaffold all handlers before adding business logic.
-
-```typescript
-// Start by creating stub handlers for every endpoint
-const stubHandler = async (req: Request, res: Response) => {
-  res.status(501).json({ error: "Not implemented yet" });
-};
-
-router.get("/manifest", stubHandler);
-router.post("/payments", stubHandler);
-router.post("/payments/:paymentId/cancellations", stubHandler);
-router.post("/payments/:paymentId/settlements", stubHandler);
-router.post("/payments/:paymentId/refunds", stubHandler);
-router.post("/payments/:paymentId/inbound-request/:action", stubHandler);
-// Then replace each stub with real logic incrementally
-```
-
----
-
-### Anti-Pattern: Using Incorrect HTTP Methods
-
-**What happens**: The developer uses POST for the Manifest endpoint or GET for Create Payment.
-
-**Why it fails**: The Gateway sends requests with specific HTTP methods. A POST handler on `/manifest` will not receive the GET request the Gateway sends, returning a 404 or 405.
-
-**Fix**: Follow the exact HTTP methods from the protocol:
-
-```typescript
-// GET for manifest — the Gateway reads capabilities, not writes
-router.get("/manifest", manifestHandler);
-
-// POST for all payment operations — these create or modify state
-router.post("/payments", createPaymentHandler);
-router.post("/payments/:paymentId/cancellations", cancelPaymentHandler);
-router.post("/payments/:paymentId/settlements", capturePaymentHandler);
-router.post("/payments/:paymentId/refunds", refundPaymentHandler);
-router.post("/payments/:paymentId/inbound-request/:action", inboundRequestHandler);
-```
-
----
-
-### Anti-Pattern: Missing or Incorrect Delay Values
-
-**What happens**: The developer omits `delayToAutoSettle`, `delayToAutoSettleAfterAntifraud`, or `delayToCancel` from the Create Payment response, or sets them to zero.
-
-**Why it fails**: These values (in seconds) control when the Gateway automatically captures or cancels a payment. Zero or missing values cause immediate auto-capture or auto-cancel, which leads to premature settlement or lost payments.
-
-**Fix**: Always return sensible delay values in seconds:
-
-```typescript
-const response: CreatePaymentResponse = {
-  paymentId: body.paymentId,
-  status: "approved",
-  authorizationId: "AUTH-123",
-  nsu: "NSU-456",
-  tid: "TID-789",
-  acquirer: "MyProvider",
-  code: "200",
-  message: "Approved",
-  delayToAutoSettle: 21600,                  // 6 hours
-  delayToAutoSettleAfterAntifraud: 1800,     // 30 minutes
-  delayToCancel: 21600,                      // 6 hours
-};
-```
+- [`payment-idempotency`](../payment-idempotency/skill.md) — Idempotency keys (`paymentId`, `requestId`) and state machine for duplicate prevention
+- [`payment-async-flow`](../payment-async-flow/skill.md) — Async payment methods, `callbackUrl`, and the 7-day retry window
+- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance, Secure Proxy, and card data handling
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Payment Provider Protocol Overview](https://developers.vtex.com/docs/guides/payment-provider-protocol-api-overview) — API overview with endpoint requirements, common parameters, and test suite info
 - [Implementing a Payment Provider](https://developers.vtex.com/docs/guides/payments-integration-implementing-a-payment-provider) — Step-by-step guide covering all 9 endpoints with request/response examples

@@ -5,48 +5,63 @@ description: >
   Covers builders (node, react, graphql, admin, pixel, messages, store), policy declarations, dependencies,
   peerDependencies, and app lifecycle management. Use for scaffolding new VTEX IO apps, configuring builders,
   or fixing deployment failures related to app structure and naming conventions.
-track: vtex-io
-tags:
-  - vtex-io
-  - manifest
-  - builders
-  - policies
-  - app-structure
-  - dependencies
-  - service-json
-globs:
-  - "manifest.json"
-  - "service.json"
-  - "node/package.json"
-version: "1.0"
-vtex_docs_verified: "2026-03-16"
+metadata:
+  track: vtex-io
+  tags:
+    - vtex-io
+    - manifest
+    - builders
+    - policies
+    - app-structure
+    - dependencies
+    - service-json
+  globs:
+    - "manifest.json"
+    - "service.json"
+    - "node/package.json"
+  version: "1.0"
+  purpose: Decide which builders, policies, and manifest fields a VTEX IO app needs
+  applies_to:
+    - scaffolding new VTEX IO apps
+    - adding builders to existing apps
+    - configuring policies for API access
+    - fixing deployment failures related to manifest
+  excludes:
+    - backend service implementation details (see vtex-io-service-apps)
+    - React component development (see vtex-io-react-apps)
+  decision_scope:
+    - which builders to declare
+    - which policies to configure
+    - how to structure app directories
+  vtex_docs_verified: "2026-03-16"
 ---
 
 # App Architecture & Manifest Configuration
 
-## Overview
+## When this skill applies
 
-**What this skill covers**: The foundational structure of every VTEX IO app — the `manifest.json` file, builder system, policy declarations, dependency management, `service.json` resource limits, and app lifecycle (link, publish, deploy).
+Use this skill when working with the foundational structure of a VTEX IO app — the `manifest.json` file, builder system, policy declarations, dependency management, `service.json` resource limits, and app lifecycle (link, publish, deploy).
 
-**When to use it**: When creating a new VTEX IO app from scratch, adding a builder to an existing app, configuring policies for API access, or troubleshooting deployment failures related to manifest misconfiguration.
+- Creating a new VTEX IO app from scratch
+- Adding a builder to an existing app
+- Configuring policies for API access
+- Troubleshooting deployment failures related to manifest misconfiguration
 
-**What you'll learn**:
-- How to configure `manifest.json` with the correct fields, builders, and policies
-- Which builders to use for different app capabilities (backend, frontend, GraphQL, admin, pixel, messages, store themes)
-- How to declare policies for accessing VTEX APIs and external services
-- How `service.json` controls memory and timeout limits for backend services
+Do not use this skill for:
+- Backend service implementation details (use `vtex-io-service-apps` instead)
+- React component development (use `vtex-io-react-apps` instead)
+- GraphQL schema and resolver details (use `vtex-io-graphql-api` instead)
 
-## Key Concepts
+## Decision rules
 
-**Essential knowledge before implementation**:
+- Every VTEX IO app starts with `manifest.json` — it defines identity (`vendor`, `name`, `version`), builders, dependencies, and policies.
+- Use the builder that matches the directory: `node` for `/node`, `react` for `/react`, `graphql` for `/graphql`, `admin` for `/admin`, `pixel` for `/pixel`, `messages` for `/messages`, `store` for `/store`, `masterdata` for `/masterdata`, `styles` for `/styles`.
+- Declare policies for every external host your app calls and every VTEX Admin resource it accesses.
+- Use `service.json` in `/node` to configure memory (max 512MB), timeout, autoscaling, and route definitions.
+- Use semver ranges (`3.x`) for dependencies, not exact versions.
+- Use `peerDependencies` for apps that must be present but should not be auto-installed.
 
-### Concept 1: Manifest.json
-
-The `manifest.json` file is the entry point for every VTEX IO app. It defines the app's identity (`vendor`, `name`, `version`), declares which `builders` will process the app's code, lists `dependencies` on other VTEX IO apps, and specifies `policies` granting access to external services and VTEX resources. Without a valid manifest, the app cannot be linked, published, or deployed.
-
-### Concept 2: Builders
-
-Builders are abstractions that process specific directories in your app. Each builder transforms code in its corresponding folder into runnable artifacts. The key builders are:
+Builders reference:
 
 | Builder | Directory | Purpose |
 |---------|-----------|---------|
@@ -60,42 +75,12 @@ Builders are abstractions that process specific directories in your app. Each bu
 | `masterdata` | `/masterdata` | Master Data v2 entity schemas and triggers |
 | `styles` | `/styles` | CSS/Tachyons configuration for Store Framework themes |
 
-### Concept 3: Policies
-
-Policies grant your app permission to access external resources. There are three types:
-
+Policy types:
 1. **Outbound-access policies**: Grant access to explicit URLs (external APIs or VTEX endpoints).
 2. **License Manager policies**: Grant access to VTEX Admin resources using resource keys.
 3. **App role-based policies**: Grant access to routes or GraphQL queries exposed by other IO apps, using the format `{vendor}.{app-name}:{policy-name}`.
 
-Without the correct policies, API calls from your app will fail with `403 Forbidden` errors at runtime.
-
-### Concept 4: service.json
-
-The `service.json` file in the `/node` directory configures runtime resource limits for backend services:
-
-```json
-{
-  "memory": 256,
-  "timeout": 30,
-  "minReplicas": 2,
-  "maxReplicas": 10,
-  "workers": 4,
-  "routes": {
-    "status": {
-      "path": "/_v/status/:code",
-      "public": true
-    }
-  }
-}
-```
-
-- `memory`: Maximum memory in MB (default 256, max 512)
-- `timeout`: Request timeout in seconds (default 30)
-- `minReplicas` / `maxReplicas`: Autoscaling range
-- `routes`: HTTP route definitions with path patterns and access control
-
-**Architecture/Data Flow**:
+Architecture:
 
 ```text
 manifest.json
@@ -112,19 +97,22 @@ manifest.json
 └── peerDependencies → apps required but not auto-installed
 ```
 
-## Constraints
-
-**Rules that MUST be followed to avoid failures, security issues, or platform incompatibilities.**
+## Hard constraints
 
 ### Constraint: Declare All Required Builders
 
-**Rule**: Every directory in your app that contains processable code MUST have a corresponding builder declared in `manifest.json`. If you have a `/node` directory, the `node` builder MUST be declared. If you have a `/react` directory, the `react` builder MUST be declared.
+Every directory in your app that contains processable code MUST have a corresponding builder declared in `manifest.json`. If you have a `/node` directory, the `node` builder MUST be declared. If you have a `/react` directory, the `react` builder MUST be declared.
 
-**Why**: Without the builder declaration, the VTEX IO platform ignores the directory entirely. Your backend code will not compile, your React components will not render, and your GraphQL schemas will not be registered. The app will link successfully but the functionality will silently be absent.
+**Why this matters**
 
-**Detection**: If you see backend TypeScript code in a `/node` directory but the manifest does not declare `"node": "7.x"` in `builders`, STOP and add the builder. Same applies to `/react` without `"react": "3.x"`, `/graphql` without `"graphql": "1.x"`, etc.
+Without the builder declaration, the VTEX IO platform ignores the directory entirely. Your backend code will not compile, your React components will not render, and your GraphQL schemas will not be registered. The app will link successfully but the functionality will silently be absent.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see backend TypeScript code in a `/node` directory but the manifest does not declare `"node": "7.x"` in `builders`, STOP and add the builder. Same applies to `/react` without `"react": "3.x"`, `/graphql` without `"graphql": "1.x"`, etc.
+
+**Correct**
+
 ```json
 {
   "name": "my-service-app",
@@ -142,7 +130,8 @@ manifest.json
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "name": "my-service-app",
@@ -156,23 +145,26 @@ manifest.json
   "dependencies": {},
   "policies": []
 }
-// Missing "node" and "graphql" builders — the /node and /graphql
-// directories will be completely ignored. Backend code won't compile,
-// GraphQL schema won't be registered. The app links without errors
-// but nothing works.
 ```
+
+Missing "node" and "graphql" builders — the /node and /graphql directories will be completely ignored. Backend code won't compile, GraphQL schema won't be registered. The app links without errors but nothing works.
 
 ---
 
 ### Constraint: Declare Policies for All External Access
 
-**Rule**: Every external API call or VTEX resource access MUST have a corresponding policy in `manifest.json`. This includes outbound HTTP calls to external hosts, VTEX Admin resource access, and consumption of other apps' GraphQL APIs.
+Every external API call or VTEX resource access MUST have a corresponding policy in `manifest.json`. This includes outbound HTTP calls to external hosts, VTEX Admin resource access, and consumption of other apps' GraphQL APIs.
 
-**Why**: VTEX IO sandboxes apps for security. Without the proper policy, any outbound HTTP request will be blocked at the infrastructure level, returning a `403 Forbidden` error. This is not a code issue — it is a platform-level restriction.
+**Why this matters**
 
-**Detection**: If you see code making API calls (via clients or HTTP) to a host, STOP and verify that an `outbound-access` policy exists for that host in the manifest. If you see `licenseManager.canAccessResource(...)`, verify a License Manager policy exists.
+VTEX IO sandboxes apps for security. Without the proper policy, any outbound HTTP request will be blocked at the infrastructure level, returning a `403 Forbidden` error. This is not a code issue — it is a platform-level restriction.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see code making API calls (via clients or HTTP) to a host, STOP and verify that an `outbound-access` policy exists for that host in the manifest. If you see `licenseManager.canAccessResource(...)`, verify a License Manager policy exists.
+
+**Correct**
+
 ```json
 {
   "policies": [
@@ -203,27 +195,32 @@ manifest.json
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "policies": []
 }
-// Empty policies array while the app makes calls to api.vtex.com
-// and uses Master Data. All outbound requests will fail at runtime
-// with 403 Forbidden errors that are difficult to debug.
 ```
+
+Empty policies array while the app makes calls to api.vtex.com and uses Master Data. All outbound requests will fail at runtime with 403 Forbidden errors that are difficult to debug.
 
 ---
 
 ### Constraint: Follow App Naming Conventions
 
-**Rule**: App names MUST be in kebab-case (lowercase letters separated by hyphens). The vendor MUST match the VTEX account name. Version MUST follow Semantic Versioning 2.0.0.
+App names MUST be in kebab-case (lowercase letters separated by hyphens). The vendor MUST match the VTEX account name. Version MUST follow Semantic Versioning 2.0.0.
 
-**Why**: Apps with invalid names cannot be published to the VTEX App Store. Names with special characters or uppercase letters will be rejected by the builder-hub. Vendor mismatch prevents the account from managing the app.
+**Why this matters**
 
-**Detection**: If you see an app name with uppercase letters, underscores, special characters, or numbers at the beginning, STOP and fix the name.
+Apps with invalid names cannot be published to the VTEX App Store. Names with special characters or uppercase letters will be rejected by the builder-hub. Vendor mismatch prevents the account from managing the app.
 
-✅ **CORRECT**:
+**Detection**
+
+If you see an app name with uppercase letters, underscores, special characters, or numbers at the beginning, STOP and fix the name.
+
+**Correct**
+
 ```json
 {
   "name": "order-status-dashboard",
@@ -232,39 +229,29 @@ manifest.json
 }
 ```
 
-❌ **WRONG**:
+**Wrong**
+
 ```json
 {
   "name": "Order_Status_Dashboard",
   "vendor": "mycompany",
   "version": "2.1"
 }
-// Uppercase letters and underscores in the name will be rejected.
-// Version "2.1" is not valid semver — must be "2.1.0".
 ```
 
-## Implementation Pattern
+Uppercase letters and underscores in the name will be rejected. Version "2.1" is not valid semver — must be "2.1.0".
 
-**The canonical, recommended way to scaffold and configure a VTEX IO app.**
+## Preferred pattern
 
-### Step 1: Initialize the App
-
-Use the VTEX IO CLI to create a new app from a boilerplate template:
+Initialize with the VTEX IO CLI:
 
 ```bash
-# Install VTEX IO CLI if not already installed
 vtex init
-
-# Select the appropriate template:
-# - service-example: Backend service with Node
-# - graphql-example: GraphQL API with Node
-# - react-app-template: Frontend React app
-# - store-theme: Store Framework theme
 ```
 
-### Step 2: Configure manifest.json
+Select the appropriate template: `service-example`, `graphql-example`, `react-app-template`, or `store-theme`.
 
-Edit the manifest with your app's identity and required builders:
+Recommended manifest configuration:
 
 ```json
 {
@@ -302,9 +289,7 @@ Edit the manifest with your app's identity and required builders:
 }
 ```
 
-### Step 3: Configure service.json for Backend Apps
-
-Create `/node/service.json` to define resource limits and routes:
+Recommended `service.json` for backend apps:
 
 ```json
 {
@@ -326,9 +311,7 @@ Create `/node/service.json` to define resource limits and routes:
 }
 ```
 
-### Step 4: Set Up the Directory Structure
-
-Create the directories matching your declared builders:
+Recommended directory structure:
 
 ```text
 my-app/
@@ -357,9 +340,7 @@ my-app/
     └── README.md
 ```
 
-### Complete Example
-
-A full `manifest.json` for a comprehensive app using multiple builders:
+Full `manifest.json` for a comprehensive app using multiple builders:
 
 ```json
 {
@@ -421,80 +402,22 @@ A full `manifest.json` for a comprehensive app using multiple builders:
 }
 ```
 
-## Anti-Patterns
+## Common failure modes
 
-**Common mistakes developers make and how to fix them.**
+- **Declaring unused builders**: Adding builders "just in case" creates overhead during the build process. Unused builder directories can cause build warnings. Only declare builders your app actively uses.
+- **Wildcard outbound policies**: Using `"host": "*"` or `"path": "/*"` is a security risk, will be rejected during app review, and makes security audits difficult. Declare specific policies for each external service.
+- **Hardcoding version in dependencies**: Pinning exact versions like `"vtex.store-components": "3.165.0"` prevents receiving bug fixes. Use major version ranges with `x` wildcard: `"vtex.store-components": "3.x"`.
 
-### Anti-Pattern: Declaring Unused Builders
+## Review checklist
 
-**What happens**: Developers add builders "just in case" — declaring `react`, `graphql`, `admin`, and `store` builders even though the app only needs `node`.
-
-**Why it fails**: Each builder creates overhead during the build process. Unused builder directories that are empty or missing can cause build warnings. Worse, if someone accidentally adds files to a builder directory, they may introduce unintended functionality.
-
-**Fix**: Only declare builders that your app actively uses. Remove any builder declarations without corresponding directory content.
-
-```json
-{
-  "builders": {
-    "node": "7.x",
-    "graphql": "1.x"
-  }
-}
-```
-
----
-
-### Anti-Pattern: Wildcard Outbound Policies
-
-**What happens**: Developers use overly broad outbound-access policies like `"host": "*"` or `"path": "/*"` to avoid policy errors during development.
-
-**Why it fails**: Overly permissive policies are a security risk and will be rejected during app review for the VTEX App Store. They also make it unclear which external services the app actually communicates with, making security audits difficult.
-
-**Fix**: Declare specific policies for each external service your app communicates with:
-
-```json
-{
-  "policies": [
-    {
-      "name": "outbound-access",
-      "attrs": {
-        "host": "api.vtex.com",
-        "path": "/api/*"
-      }
-    },
-    {
-      "name": "outbound-access",
-      "attrs": {
-        "host": "my-external-api.example.com",
-        "path": "/v1/*"
-      }
-    }
-  ]
-}
-```
-
----
-
-### Anti-Pattern: Hardcoding Version in Dependencies
-
-**What happens**: Developers pin exact versions in dependencies like `"vtex.store-components": "3.165.0"` instead of using version ranges.
-
-**Why it fails**: Exact versions prevent your app from receiving bug fixes and patches from dependency updates. VTEX IO uses semver ranges, and minor/patch updates are backward-compatible. Pinning forces users to manually update your app for every dependency patch.
-
-**Fix**: Use major version ranges with the `x` wildcard:
-
-```json
-{
-  "dependencies": {
-    "vtex.store-components": "3.x",
-    "vtex.styleguide": "9.x"
-  }
-}
-```
+- [ ] Does every code directory (`/node`, `/react`, `/graphql`, etc.) have a matching builder in `manifest.json`?
+- [ ] Are all external hosts and VTEX resources declared in `policies`?
+- [ ] Is the app name kebab-case, vendor matching account, version valid semver?
+- [ ] Does `service.json` exist for apps with the `node` builder?
+- [ ] Are dependencies using major version ranges (`3.x`) instead of exact versions?
+- [ ] Are placeholder values (vendor, app name, policies) replaced with real values?
 
 ## Reference
-
-**Links to VTEX documentation and related resources.**
 
 - [Manifest](https://developers.vtex.com/docs/guides/vtex-io-documentation-manifest) — Complete reference for all manifest.json fields and their usage
 - [Builders](https://developers.vtex.com/docs/guides/vtex-io-documentation-builders) — Full list of available builders with descriptions and usage examples
