@@ -8,6 +8,8 @@ This file provides instructions for AI coding agents working on this repository.
 2. **Validate before committing**: Run `bun run validate`. All 11 checks must pass.
 3. **Regenerate exports**: Run `bun run export` after any skill change. Commit both source and generated files.
 
+For the full update workflow — including the commit prefix table and what fields must not be changed — see [Updating an Existing Skill](CONTRIBUTING.md#updating-an-existing-skill).
+
 ## Skill template
 
 All skills use the decision-oriented template at `_templates/skill-template.md`.

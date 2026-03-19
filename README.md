@@ -219,8 +219,21 @@ Compatible tools (Cursor, Claude Code, and others implementing the Open Plugins 
 
 ## For Contributors
 
+```text
+tracks/       # skill source files — edit here
+exports/      # generated platform exports — do not edit
+skills/       # generated OpenCode export — do not edit
+rules/        # generated Cursor export — do not edit
+scripts/      # export and validation tooling
+_templates/   # skill template
+```
+
+The workflow is always: **edit `tracks/` → `bun run validate` → `bun run export` → commit both.**
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide, including how to update existing skills, add new ones, and follow commit conventions.
+
 <details>
-<summary>Directory structure, export commands, and validation</summary>
+<summary>Full directory structure, export commands, and validation</summary>
 
 ### Directory Structure
 

@@ -22,12 +22,95 @@ The workflow is always: **edit `tracks/` → validate → export → commit both
 
 ## Table of Contents
 
+- [Updating an Existing Skill](#updating-an-existing-skill)
 - [Adding a New Skill](#adding-a-new-skill)
 - [Skill Template Reference](#skill-template-reference)
 - [Adding a New Track](#adding-a-new-track)
 - [Adding a New Export Platform](#adding-a-new-export-platform)
 - [Quality Checklist](#quality-checklist)
 - [Naming Conventions](#naming-conventions)
+
+---
+
+## Updating an Existing Skill
+
+Most contributions are edits to existing skills — fixing a broken URL, correcting an outdated constraint, improving a code example, or resolving a validation error. The workflow is shorter than adding a new skill.
+
+### Step 1: Find the source file
+
+All skill source files follow this path:
+
+```text
+tracks/{track}/skills/{skill-name}/skill.md
+```
+
+| Track | Directory |
+|---|---|
+| FastStore | `tracks/faststore/skills/` |
+| Payment | `tracks/payment/skills/` |
+| VTEX IO | `tracks/vtex-io/skills/` |
+| Marketplace | `tracks/marketplace/skills/` |
+| Headless | `tracks/headless/skills/` |
+
+### Step 2: Make the edit
+
+Match your change type to the right section and commit prefix:
+
+| Change type | What to edit | Commit prefix |
+|---|---|---|
+| Fix a broken URL | `## Reference` section | `fix(track):` |
+| Fix a wrong or outdated constraint | The specific constraint block | `fix(track):` |
+| Fix a validation error | Whatever `bun run validate` reports | `fix(track):` |
+| Improve a code example | `Correct` or `Wrong` block in a constraint | `refactor(track):` |
+| Add a missing constraint | New full block in `## Hard constraints` | `refactor(track):` |
+| Clarify prose or decision rules | The relevant section | `refactor(track):` |
+
+When adding a constraint, include all required fields: rule statement, `**Why this matters**`, `**Detection**`, `**Correct**`, and `**Wrong**` examples.
+
+### Step 3: Bump the verification date
+
+If you checked content against VTEX documentation, update `vtex_docs_verified` in the frontmatter:
+
+```yaml
+metadata:
+  vtex_docs_verified: "2026-03-19"  # date you verified
+```
+
+### Step 4: Validate
+
+```bash
+bun run validate
+```
+
+Fix any reported issues before continuing.
+
+### Step 5: Export
+
+```bash
+bun run export
+```
+
+### Step 6: Commit source and exports together
+
+Include the edited skill file and the regenerated `exports/` directory in the same commit. Use the prefix that matches your change type from the table above:
+
+```bash
+# Example: fixing a broken URL
+git add tracks/payment/skills/payment-idempotency/skill.md exports/
+git commit -m "fix(payment): update broken idempotency docs URL"
+
+# Example: improving an example
+git add tracks/faststore/skills/faststore-overrides/skill.md exports/
+git commit -m "refactor(faststore): improve override example with real section ID"
+```
+
+See [Releases and Versioning](#releases-and-versioning) for the full commit convention table and which prefixes trigger version bumps.
+
+### What not to change
+
+- **`name` field** in frontmatter — it is the skill's unique ID across all exports. Renaming it is a breaking change that requires a `feat!:` commit and a major version bump.
+- **Skill directory name** — must match the `name` field exactly.
+- **Don't bundle unrelated changes** — keep PRs focused. A URL fix and a new constraint belong in separate commits.
 
 ---
 
@@ -288,7 +371,7 @@ Before submitting a pull request, verify all of these:
 - [ ] Example values are clearly marked as placeholders or documented examples when they are not universal defaults
 - [ ] All VTEX doc links use `developers.vtex.com` or `help.vtex.com`
 - [ ] The `metadata.vtex_docs_verified` date reflects when you last checked the docs
-- [ ] The track `index.md` includes the new skill in its table and learning order
+- [ ] The track `index.md` includes the new skill in its table and learning order *(new skills only)*
 - [ ] The `exports/` directory is updated (run `bun run export` and commit the output)
 
 ---
