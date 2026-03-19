@@ -9,11 +9,8 @@ on:
       - '_templates/**'
       - 'package.json'
   pull_request:
-    paths:
-      - 'tracks/**/*.md'
-      - 'scripts/**/*.ts'
-      - '_templates/**'
-      - 'package.json'
+    # No path filter — always runs on every PR so the required status check is
+    # never left pending on doc-only or config-only changes.
 
 permissions:
   contents: read
@@ -41,6 +38,12 @@ jobs:
       - name: Generate exports
         run: bun run export
 
+      - name: Check exports are up to date
+        if: github.event_name == 'pull_request'
+        run: |
+          git diff --exit-code exports/ rules/ skills/ || \
+            (echo "::error::Exports are stale — run 'bun run export' locally and commit the result." && exit 1)
+
       - name: Sync plugin directories
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -51,12 +54,12 @@ jobs:
 
       - name: Check for changes
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: changes
+        id: diff
         run: |
           git diff --quiet exports/ rules/ skills/ || echo "changed=true" >> $GITHUB_OUTPUT
 
       - name: Commit generated exports
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.changes.outputs.changed == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.diff.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
