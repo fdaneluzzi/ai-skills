@@ -15,9 +15,9 @@ Use this skill when building cart and checkout functionality for any headless VT
 - Managing `orderFormId` and `CheckoutOrderFormOwnership` cookies server-side
 
 Do not use this skill for:
-- General BFF architecture and API routing (use [`headless-bff-architecture`](../headless-bff-architecture/skill.md))
-- Search API integration (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
-- Caching strategy decisions (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
+- General BFF architecture and API routing (use [`headless-bff-architecture`](../headless-bff-architecture/SKILL.md))
+- Search API integration (use [`headless-intelligent-search`](../headless-intelligent-search/SKILL.md))
+- Caching strategy decisions (use [`headless-caching-strategy`](../headless-caching-strategy/SKILL.md))
 
 ## Decision rules
 

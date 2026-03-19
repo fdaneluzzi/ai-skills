@@ -389,4 +389,4 @@ export default reviewsResolver
 - [GraphQL schema objects](https://developers.vtex.com/docs/guides/faststore/schema-objects) — Reference for all native GraphQL types (StoreProduct, StoreOffer, etc.)
 - [GraphQL queries reference](https://developers.vtex.com/docs/guides/faststore/schema-queries) — All predefined queries available in the FastStore API
 - [API extension troubleshooting](https://developers.vtex.com/docs/guides/faststore/api-extensions-troubleshooting) — Common issues with API extensions and their solutions
-- [`faststore-state-management`](../faststore-state-management/skill.md) — Related skill for client-side state management with SDK hooks
+- [`faststore-state-management`](../faststore-state-management/SKILL.md) — Related skill for client-side state management with SDK hooks

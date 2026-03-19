@@ -296,13 +296,14 @@ ${trackList}
 
 function buildOpenCodeSkillMd(skill: Skill): string {
   const desc = normalizeDescription(skill.frontmatter.description);
+  const content = skill.content.trim().replace(/\/skill\.md\)/g, "/SKILL.md)");
 
   return `---
 name: ${skill.frontmatter.name}
 description: "${desc}"
 ---
 
-${skill.content.trim()}
+${content}
 `;
 }
 
