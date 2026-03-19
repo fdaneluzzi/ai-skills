@@ -13,9 +13,9 @@ Use this skill when:
 - Preparing a connector for VTEX Payment Provider Test Suite homologation
 
 Do not use this skill for:
-- Idempotency and duplicate prevention logic — use [`payment-idempotency`](../payment-idempotency/skill.md)
-- Async payment flows and callback URLs — use [`payment-async-flow`](../payment-async-flow/skill.md)
-- PCI compliance and Secure Proxy card handling — use [`payment-pci-security`](../payment-pci-security/skill.md)
+- Idempotency and duplicate prevention logic — use [`payment-idempotency`](../payment-idempotency/SKILL.md)
+- Async payment flows and callback URLs — use [`payment-async-flow`](../payment-async-flow/SKILL.md)
+- PCI compliance and Secure Proxy card handling — use [`payment-pci-security`](../payment-pci-security/SKILL.md)
 
 ## Decision rules
 
@@ -420,9 +420,9 @@ export default configRouter;
 
 ## Related skills
 
-- [`payment-idempotency`](../payment-idempotency/skill.md) — Idempotency keys (`paymentId`, `requestId`) and state machine for duplicate prevention
-- [`payment-async-flow`](../payment-async-flow/skill.md) — Async payment methods, `callbackUrl`, and the 7-day retry window
-- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance, Secure Proxy, and card data handling
+- [`payment-idempotency`](../payment-idempotency/SKILL.md) — Idempotency keys (`paymentId`, `requestId`) and state machine for duplicate prevention
+- [`payment-async-flow`](../payment-async-flow/SKILL.md) — Async payment methods, `callbackUrl`, and the 7-day retry window
+- [`payment-pci-security`](../payment-pci-security/SKILL.md) — PCI compliance, Secure Proxy, and card data handling
 
 ## Reference
 

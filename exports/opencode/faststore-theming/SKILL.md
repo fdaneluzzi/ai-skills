@@ -271,4 +271,4 @@ For custom (non-FastStore) components, use CSS modules to avoid conflicts:
 - [Styling a component](https://developers.vtex.com/docs/guides/faststore/using-themes-components) — Guide for customizing individual component styles with local tokens
 - [Available themes](https://developers.vtex.com/docs/guides/faststore/themes-overview) — Pre-built themes (Midnight, Soft Blue) available as starting points
 - [Importing FastStore UI component styles](https://developers.vtex.com/docs/guides/faststore/using-themes-importing-ui-components-styles) — How to import and use component styles in custom sections
-- [`faststore-overrides`](../faststore-overrides/skill.md) — Related skill for when theming alone is insufficient and behavioral changes are needed
+- [`faststore-overrides`](../faststore-overrides/SKILL.md) — Related skill for when theming alone is insufficient and behavioral changes are needed

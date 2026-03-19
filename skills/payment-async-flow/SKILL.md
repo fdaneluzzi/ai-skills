@@ -14,9 +14,9 @@ Use this skill when:
 - Managing the Gateway's 7-day automatic retry cycle for `undefined` status payments
 
 Do not use this skill for:
-- PPP endpoint contracts and response shapes — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
-- `paymentId`/`requestId` idempotency and state machine logic — use [`payment-idempotency`](../payment-idempotency/skill.md)
-- PCI compliance and Secure Proxy card handling — use [`payment-pci-security`](../payment-pci-security/skill.md)
+- PPP endpoint contracts and response shapes — use [`payment-provider-protocol`](../payment-provider-protocol/SKILL.md)
+- `paymentId`/`requestId` idempotency and state machine logic — use [`payment-idempotency`](../payment-idempotency/SKILL.md)
+- PCI compliance and Secure Proxy card handling — use [`payment-pci-security`](../payment-pci-security/SKILL.md)
 
 ## Decision rules
 
@@ -350,9 +350,9 @@ async function notifyGateway(callbackUrl: string, payload: object): Promise<void
 
 ## Related skills
 
-- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
-- [`payment-idempotency`](../payment-idempotency/skill.md) — `paymentId`/`requestId` idempotency and state machine
-- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance and Secure Proxy
+- [`payment-provider-protocol`](../payment-provider-protocol/SKILL.md) — Endpoint contracts and response shapes
+- [`payment-idempotency`](../payment-idempotency/SKILL.md) — `paymentId`/`requestId` idempotency and state machine
+- [`payment-pci-security`](../payment-pci-security/SKILL.md) — PCI compliance and Secure Proxy
 
 ## Reference
 

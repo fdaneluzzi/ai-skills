@@ -14,9 +14,9 @@ Use this skill when:
 - Auditing a connector for PCI DSS compliance (data storage, logging, transmission)
 
 Do not use this skill for:
-- PPP endpoint contracts and response shapes — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
-- Idempotency and duplicate prevention — use [`payment-idempotency`](../payment-idempotency/skill.md)
-- Async payment flows (Boleto, Pix) and callbacks — use [`payment-async-flow`](../payment-async-flow/skill.md)
+- PPP endpoint contracts and response shapes — use [`payment-provider-protocol`](../payment-provider-protocol/SKILL.md)
+- Idempotency and duplicate prevention — use [`payment-idempotency`](../payment-idempotency/SKILL.md)
+- Async payment flows (Boleto, Pix) and callbacks — use [`payment-async-flow`](../payment-async-flow/SKILL.md)
 
 ## Decision rules
 
@@ -363,9 +363,9 @@ function safePaymentLog(label: string, body: Record<string, unknown>): void {
 
 ## Related skills
 
-- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
-- [`payment-idempotency`](../payment-idempotency/skill.md) — `paymentId`/`requestId` idempotency and state machine
-- [`payment-async-flow`](../payment-async-flow/skill.md) — Async payment methods, callbacks, and the 7-day retry window
+- [`payment-provider-protocol`](../payment-provider-protocol/SKILL.md) — Endpoint contracts and response shapes
+- [`payment-idempotency`](../payment-idempotency/SKILL.md) — `paymentId`/`requestId` idempotency and state machine
+- [`payment-async-flow`](../payment-async-flow/SKILL.md) — Async payment methods, callbacks, and the 7-day retry window
 
 ## Reference
 

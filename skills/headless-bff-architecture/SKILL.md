@@ -15,9 +15,9 @@ Use this skill when building or modifying any headless VTEX storefront that comm
 - Reviewing a headless architecture for security compliance
 
 Do not use this skill for:
-- Checkout-specific proxy logic and OrderForm management (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
-- Search API integration details (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
-- Caching and TTL strategy (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
+- Checkout-specific proxy logic and OrderForm management (use [`headless-checkout-proxy`](../headless-checkout-proxy/SKILL.md))
+- Search API integration details (use [`headless-intelligent-search`](../headless-intelligent-search/SKILL.md))
+- Caching and TTL strategy (use [`headless-caching-strategy`](../headless-caching-strategy/SKILL.md))
 
 ## Decision rules
 

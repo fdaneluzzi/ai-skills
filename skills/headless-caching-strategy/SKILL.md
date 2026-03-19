@@ -15,9 +15,9 @@ Use this skill when building or optimizing a headless VTEX storefront for perfor
 - Implementing cache invalidation when catalog data changes
 
 Do not use this skill for:
-- BFF architecture and API routing decisions (use [`headless-bff-architecture`](../headless-bff-architecture/skill.md))
-- Intelligent Search API integration specifics (use [`headless-intelligent-search`](../headless-intelligent-search/skill.md))
-- Checkout proxy and OrderForm management (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
+- BFF architecture and API routing decisions (use [`headless-bff-architecture`](../headless-bff-architecture/SKILL.md))
+- Intelligent Search API integration specifics (use [`headless-intelligent-search`](../headless-intelligent-search/SKILL.md))
+- Checkout proxy and OrderForm management (use [`headless-checkout-proxy`](../headless-checkout-proxy/SKILL.md))
 
 ## Decision rules
 

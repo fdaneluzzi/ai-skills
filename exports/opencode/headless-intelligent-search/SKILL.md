@@ -15,9 +15,9 @@ Use this skill when implementing product search, category browsing, autocomplete
 - Wiring up search analytics events for Intelligent Search ranking
 
 Do not use this skill for:
-- BFF architecture and API routing decisions (use [`headless-bff-architecture`](../headless-bff-architecture/skill.md))
-- Checkout or cart API integration (use [`headless-checkout-proxy`](../headless-checkout-proxy/skill.md))
-- Caching strategy and TTL configuration (use [`headless-caching-strategy`](../headless-caching-strategy/skill.md))
+- BFF architecture and API routing decisions (use [`headless-bff-architecture`](../headless-bff-architecture/SKILL.md))
+- Checkout or cart API integration (use [`headless-checkout-proxy`](../headless-checkout-proxy/SKILL.md))
+- Caching strategy and TTL configuration (use [`headless-caching-strategy`](../headless-caching-strategy/SKILL.md))
 
 ## Decision rules
 

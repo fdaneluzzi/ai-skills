@@ -14,9 +14,9 @@ Use this skill when:
 - Handling the Gateway's 7-day retry window for `undefined` status payments
 
 Do not use this skill for:
-- PPP endpoint response shapes and HTTP methods — use [`payment-provider-protocol`](../payment-provider-protocol/skill.md)
-- Async callback URL notification logic — use [`payment-async-flow`](../payment-async-flow/skill.md)
-- PCI compliance and Secure Proxy — use [`payment-pci-security`](../payment-pci-security/skill.md)
+- PPP endpoint response shapes and HTTP methods — use [`payment-provider-protocol`](../payment-provider-protocol/SKILL.md)
+- Async callback URL notification logic — use [`payment-async-flow`](../payment-async-flow/SKILL.md)
+- PCI compliance and Secure Proxy — use [`payment-pci-security`](../payment-pci-security/SKILL.md)
 
 ## Decision rules
 
@@ -354,9 +354,9 @@ async function cancelPaymentHandler(req: Request, res: Response): Promise<void> 
 
 ## Related skills
 
-- [`payment-provider-protocol`](../payment-provider-protocol/skill.md) — Endpoint contracts and response shapes
-- [`payment-async-flow`](../payment-async-flow/skill.md) — Callback URL notification and the 7-day retry window
-- [`payment-pci-security`](../payment-pci-security/skill.md) — PCI compliance and Secure Proxy
+- [`payment-provider-protocol`](../payment-provider-protocol/SKILL.md) — Endpoint contracts and response shapes
+- [`payment-async-flow`](../payment-async-flow/SKILL.md) — Callback URL notification and the 7-day retry window
+- [`payment-pci-security`](../payment-pci-security/SKILL.md) — PCI compliance and Secure Proxy
 
 ## Reference
 

@@ -421,4 +421,4 @@ export default function FacetFilter() {
 - [SearchProvider](https://developers.vtex.com/docs/guides/faststore/search-search-provider) — Context provider required for useSearch to function
 - [Analytics module](https://developers.vtex.com/docs/guides/faststore/sdk-analytics) — GA4-compatible analytics event tracking
 - [Experimental hooks and components](https://developers.vtex.com/docs/guides/faststore/sdk-experimental-exports) — Unstable hooks for advanced use cases (useCart_unstable, useSession_unstable)
-- [`faststore-data-fetching`](../faststore-data-fetching/skill.md) — Related skill for fetching product data via the GraphQL API
+- [`faststore-data-fetching`](../faststore-data-fetching/SKILL.md) — Related skill for fetching product data via the GraphQL API
