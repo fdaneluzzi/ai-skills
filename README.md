@@ -228,16 +228,7 @@ Compatible tools (Cursor, Claude Code, and others implementing the Open Plugins 
 vtex_skills/
   _templates/
     skill-template.md       # Canonical template for new skills
-  exports/
-    agents-md/              # AGENTS.md format (6 files)
-    claude/                 # Claude Projects format (26 files)
-    copilot/                # GitHub Copilot format (6 files)
-    cursor/                 # Cursor .mdc format (26 files)
-    opencode/               # OpenCode SKILL.md format (21 files)
-  scripts/
-    export.ts               # Generates all platform exports
-    validate.ts             # Validates all skill files
-  tracks/
+  tracks/                   # SOURCE — edit skill files here
     faststore/
       index.md
       skills/
@@ -274,6 +265,17 @@ vtex_skills/
         vtex-io-react-apps/skill.md
         vtex-io-graphql-api/skill.md
         vtex-io-masterdata/skill.md
+  exports/                  # auto-generated — do not edit
+    agents-md/              # AGENTS.md format (6 files)
+    claude/                 # Claude Projects format (26 files)
+    copilot/                # GitHub Copilot format (6 files)
+    cursor/                 # Cursor .mdc format (26 files)
+    opencode/               # OpenCode SKILL.md format (21 files)
+  skills/                   # auto-generated — do not edit (OpenCode export)
+  rules/                    # auto-generated — do not edit (Cursor export)
+  scripts/
+    export.ts               # Generates all platform exports
+    validate.ts             # Validates all skill files
   package.json
   tsconfig.json
 ```
