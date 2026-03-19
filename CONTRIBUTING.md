@@ -2,6 +2,24 @@
 
 This guide covers everything you need to add skills, tracks, and export platforms to this repository.
 
+## How this repository works
+
+> **Edit source files only.** Files in `exports/`, `skills/`, and `rules/` are auto-generated
+> and will be silently overwritten the next time `bun run export` runs.
+
+The workflow is always: **edit `tracks/` → validate → export → commit both.**
+
+| Path | What it is | Editable? |
+|---|---|---|
+| `tracks/{track}/skills/{name}/skill.md` | Skill source of truth | ✅ Edit here |
+| `exports/` | All platform exports (cursor, copilot, agents-md, etc.) | ❌ Auto-generated |
+| `skills/` *(root-level)* | OpenCode exports | ❌ Auto-generated |
+| `rules/` | Cursor `.mdc` exports | ❌ Auto-generated |
+
+> **Common trap**: There is a `skills/` directory at the repository root that looks like source
+> files. It is not — it is the auto-generated OpenCode export. Source files live under
+> `tracks/{track}/skills/`, not at the root.
+
 ## Table of Contents
 
 - [Adding a New Skill](#adding-a-new-skill)
@@ -23,6 +41,8 @@ Skills live at `tracks/{track}/skills/{skill-name}/skill.md`. Create the directo
 mkdir -p tracks/faststore/skills/faststore-my-new-skill
 touch tracks/faststore/skills/faststore-my-new-skill/skill.md
 ```
+
+> **Not** `skills/{skill-name}/` at the repo root — that directory is the auto-generated OpenCode export and will be overwritten on the next `bun run export`.
 
 ### Step 2: Copy the template
 
@@ -259,6 +279,7 @@ Before submitting a pull request, verify all of these:
 
 - [ ] `bun run validate` passes with no errors
 - [ ] `bun run export` completes with exit code 0
+- [ ] All edits are in `tracks/`, not in `exports/`, `skills/`, or `rules/`
 - [ ] No `TBD`, `TODO`, or `[placeholder]` text in prose sections
 - [ ] All code blocks have language annotations on opening fences
 - [ ] The `description` frontmatter field starts with `Apply when ...`

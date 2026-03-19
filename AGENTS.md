@@ -4,7 +4,7 @@ This file provides instructions for AI coding agents working on this repository.
 
 ## Quick rules
 
-1. **Source files only**: Edit skill files in `tracks/{track}/skills/{name}/skill.md`. Never edit files in `exports/`, `skills/`, or `rules/` — they are auto-generated.
+1. **Source files only**: Edit skill files in `tracks/{track}/skills/{name}/skill.md`. Never edit `exports/`, `skills/`, or `rules/` — they are auto-generated and will be silently overwritten the next time `bun run export` runs.
 2. **Validate before committing**: Run `bun run validate`. All 11 checks must pass.
 3. **Regenerate exports**: Run `bun run export` after any skill change. Commit both source and generated files.
 
