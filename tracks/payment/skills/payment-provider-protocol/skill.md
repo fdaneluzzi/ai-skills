@@ -1,10 +1,11 @@
 ---
 name: payment-provider-protocol
 description: >
-  Apply when implementing a VTEX Payment Provider Protocol (PPP) connector or working with payment/connector
-  endpoint files. Covers all nine required endpoints: Manifest, Create Payment, Cancel, Capture/Settle, Refund,
-  Inbound Request, Create Auth Token, Provider Auth Redirect, and Get Credentials. Use for building or
-  debugging any payment connector that integrates with the VTEX Payment Gateway.
+  Apply when implementing a VTEX Payment Provider Protocol (PPP) connector as a plain HTTP middleware (Node, Express,
+  or any non-VTEX-IO server). Covers all nine required endpoints: Manifest, Create Payment, Cancel, Capture/Settle,
+  Refund, Inbound Request, Create Auth Token, Provider Auth Redirect, and Get Credentials. DO NOT use this skill for
+  VTEX IO apps that use @vtex/payment-provider SDK — use payment-provider-framework instead, which has the correct
+  SDK method names (authorize/cancel/settle/refund) and type names.
 metadata:
   track: payment
   tags:
@@ -14,6 +15,7 @@ metadata:
     - vtex-gateway
     - payment-endpoints
     - middleware
+    - non-vtex-io
   globs:
     - "**/payment/**/*.ts"
     - "**/connector/**/*.ts"
@@ -40,11 +42,12 @@ metadata:
 ## When this skill applies
 
 Use this skill when:
-- Building a new payment connector middleware that integrates a PSP with the VTEX Payment Gateway
-- Implementing, debugging, or extending any of the 9 PPP endpoints
+- Building a **non-VTEX IO** payment connector (plain Node.js, Express, or any HTTP server)
+- Implementing, debugging, or extending any of the 9 PPP HTTP endpoints
 - Preparing a connector for VTEX Payment Provider Test Suite homologation
 
 Do not use this skill for:
+- **VTEX IO apps using `@vtex/payment-provider` SDK** — use [`payment-provider-framework`](../payment-provider-framework/skill.md) instead. The SDK uses different method names (`authorize`/`cancel`/`settle`/`refund`) and type names than what this skill documents.
 - Idempotency and duplicate prevention logic — use [`payment-idempotency`](../payment-idempotency/skill.md)
 - Async payment flows and callback URLs — use [`payment-async-flow`](../payment-async-flow/skill.md)
 - PCI compliance and Secure Proxy card handling — use [`payment-pci-security`](../payment-pci-security/skill.md)
