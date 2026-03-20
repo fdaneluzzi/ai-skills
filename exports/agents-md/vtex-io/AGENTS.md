@@ -212,6 +212,42 @@ If you see an app name with uppercase letters, underscores, special characters, 
 
 Uppercase letters and underscores in the name will be rejected. Version "2.1" is not valid semver — must be "2.1.0".
 
+---
+
+### Constraint: Payment connector apps must pin `axios` in `resolutions`
+
+When building a VTEX IO payment connector (any app that depends on `@vtex/payment-provider`), the `node/package.json` MUST include `"axios": "0.21.1"` in the `resolutions` field, alongside the other required resolutions.
+
+**Why this matters**
+`@vtex/api` depends on `axios` as a transitive dependency. `axios >= 1.0.0` uses TypeScript 4.1 key remapping syntax (`[Key in Method as Lowercase<Key>]` in mapped types). The VTEX builder-hub is pinned to TypeScript **3.9.7** and cannot parse this syntax — `skipLibCheck` does not help because it is a **parse error**, not a type error. The result is a hard compilation failure before any application code is compiled.
+
+**Detection**
+If `node/package.json` has `@vtex/payment-provider` in its dependencies but does NOT have `"axios": "0.21.1"` in `resolutions`, STOP and add it.
+
+**Correct `node/package.json` resolutions for payment connectors**
+```json
+{
+  "resolutions": {
+    "@types/express-serve-static-core": "4.17.20",
+    "@types/koa": "2.11.6",
+    "axios": "0.21.1"
+  }
+}
+```
+
+**Wrong**
+```json
+{
+  "resolutions": {
+    "@types/express-serve-static-core": "4.17.20",
+    "@types/koa": "2.11.6"
+  }
+}
+```
+Missing `axios` — allows `@vtex/api` to pull in `axios >= 1.0`, which uses TypeScript 4.x syntax that crashes the builder-hub compiler.
+
+After adding resolutions, always run `yarn install` inside the `node/` folder before `vtex link`.
+
 ## Preferred pattern
 
 Initialize with the VTEX IO CLI:
@@ -1989,6 +2025,55 @@ If `service.json` defines more than 10 routes, warn the developer to consider sp
 ```
 
 12 routes covering reviews, products, orders, users, categories, brands, and inventory — this should be 3-4 separate apps.
+
+---
+
+### Constraint: Use `import X = require()` for CommonJS modules — and `node-fetch` for dynamic URLs
+
+Packages that use `module.exports =` (CommonJS `export =` style, like `node-fetch` v2) require `import X = require('pkg')` syntax in TypeScript 3.9.7. Using `import X from 'pkg'` with these packages silently produces an unusable binding.
+
+**Why this matters**
+With `esModuleInterop: true`, `import fetch from 'node-fetch'` compiles but produces a value that is never read at runtime, causing `error TS6133: 'fetch' is declared but its value is never read` and `error TS2304: Cannot find name 'fetch'` when actually called. The correct import form for `export =` packages is `import fetch = require('node-fetch')`.
+
+**When to use `node-fetch` instead of `ExternalClient`**
+`ExternalClient` from `@vtex/api` requires a fixed base URL in the constructor — it cannot handle per-request dynamic URLs. When calling a URL known only at runtime (like `secureProxyUrl` from the VTEX Secure Proxy), use `node-fetch` directly.
+
+**Detection**
+If the code uses `import X from 'node-fetch'` (default import) and then calls `X(dynamicUrl, ...)`, STOP and replace with `import X = require('node-fetch')`.
+
+**Correct**
+```typescript
+import fetch = require('node-fetch')
+
+async function callDynamicUrl(url: string, body: string): Promise<unknown> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  })
+  return response.json()
+}
+```
+
+Add to `dependencies` and `devDependencies` in `node/package.json`:
+```json
+{
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  },
+  "devDependencies": {
+    "@types/node-fetch": "^2.6.1"
+  }
+}
+```
+
+**Wrong**
+```typescript
+// WRONG: default import from a CommonJS export= package
+import fetch from 'node-fetch'   // compiles but 'fetch' is unusable
+
+await fetch(dynamicUrl, { ... }) // error TS2304: Cannot find name 'fetch'
+```
 
 ## Preferred pattern
 

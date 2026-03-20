@@ -252,6 +252,55 @@ If `service.json` defines more than 10 routes, warn the developer to consider sp
 
 12 routes covering reviews, products, orders, users, categories, brands, and inventory — this should be 3-4 separate apps.
 
+---
+
+### Constraint: Use `import X = require()` for CommonJS modules — and `node-fetch` for dynamic URLs
+
+Packages that use `module.exports =` (CommonJS `export =` style, like `node-fetch` v2) require `import X = require('pkg')` syntax in TypeScript 3.9.7. Using `import X from 'pkg'` with these packages silently produces an unusable binding.
+
+**Why this matters**
+With `esModuleInterop: true`, `import fetch from 'node-fetch'` compiles but produces a value that is never read at runtime, causing `error TS6133: 'fetch' is declared but its value is never read` and `error TS2304: Cannot find name 'fetch'` when actually called. The correct import form for `export =` packages is `import fetch = require('node-fetch')`.
+
+**When to use `node-fetch` instead of `ExternalClient`**
+`ExternalClient` from `@vtex/api` requires a fixed base URL in the constructor — it cannot handle per-request dynamic URLs. When calling a URL known only at runtime (like `secureProxyUrl` from the VTEX Secure Proxy), use `node-fetch` directly.
+
+**Detection**
+If the code uses `import X from 'node-fetch'` (default import) and then calls `X(dynamicUrl, ...)`, STOP and replace with `import X = require('node-fetch')`.
+
+**Correct**
+```typescript
+import fetch = require('node-fetch')
+
+async function callDynamicUrl(url: string, body: string): Promise<unknown> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  })
+  return response.json()
+}
+```
+
+Add to `dependencies` and `devDependencies` in `node/package.json`:
+```json
+{
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  },
+  "devDependencies": {
+    "@types/node-fetch": "^2.6.1"
+  }
+}
+```
+
+**Wrong**
+```typescript
+// WRONG: default import from a CommonJS export= package
+import fetch from 'node-fetch'   // compiles but 'fetch' is unusable
+
+await fetch(dynamicUrl, { ... }) // error TS2304: Cannot find name 'fetch'
+```
+
 ## Preferred pattern
 
 Define custom clients:

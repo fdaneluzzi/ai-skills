@@ -215,6 +215,83 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
+---
+
+### Constraint: Modern PSP APIs require a two-step Secure Proxy flow
+
+Many modern PSPs (card networks, wallet providers) use a two-step authorization model:
+1. **Step 1 — via Secure Proxy** (card data involved): create a payment instrument/method token at the PSP from the card tokens. The Secure Proxy replaces VTEX tokens with real card data before forwarding.
+2. **Step 2 — direct to PSP** (no card data): use the instrument token from Step 1 to create and confirm the payment intent. This call does NOT go through the Secure Proxy because no card data is involved.
+
+**Why this matters**
+Attempting to send card tokens and payment metadata in a single request through the Secure Proxy will fail because the PSP API expects them in separate calls. The instrument token from Step 1 is safe to use in direct API calls — it references tokenized card data at the PSP, not raw card numbers.
+
+**Detection**
+If the connector tries to do card tokenization AND payment authorization in a single Secure Proxy call, review the PSP documentation. If the PSP has separate endpoints for "create payment method" and "create payment intent", use the two-step pattern.
+
+**Correct — two-step flow**
+```typescript
+// Step 1: via Secure Proxy — card data involved
+// The proxy replaces VTEX tokens (numberToken, cscToken) with real card data
+const instrumentResponse = await fetch(secureProxyUrl, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "X-PROVIDER-Forward-To": "https://api.mypsp.com/v1/payment_methods",
+    "X-PROVIDER-Forward-Authorization": `Bearer ${apiKey}`,
+  },
+  body: [
+    `type=card`,
+    `card[number]=${card.numberToken}`,
+    `card[cvc]=${card.cscToken}`,
+    `card[exp_month]=${card.expiration.month}`,
+    `card[exp_year]=${card.expiration.year}`,
+  ].join("&"),
+})
+const { id: paymentMethodId } = await instrumentResponse.json()
+
+// Step 2: direct to PSP — no card data, safe to call directly
+const paymentResponse = await fetch("https://api.mypsp.com/v1/payment_intents", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Authorization": `Bearer ${apiKey}`,
+    "Idempotency-Key": `authorize-${paymentId}`,
+  },
+  body: [
+    `amount=${Math.round(value * 100)}`,
+    `currency=${currency.toLowerCase()}`,
+    `payment_method=${paymentMethodId}`,
+    `capture_method=manual`,
+    `confirm=true`,
+  ].join("&"),
+})
+const paymentIntent = await paymentResponse.json()
+
+// Save paymentMethodId + paymentIntent.id in VBase for cancel/capture/refund
+await this.context.clients.vbase.saveJSON("payments", paymentId, {
+  paymentMethodId,
+  intentId: paymentIntent.id,
+})
+```
+
+**Wrong — single-step attempt**
+```typescript
+// WRONG: trying to include both card data AND payment metadata in one Secure Proxy call
+// The PSP API separates these operations — this will fail with a 400 or 422
+const response = await fetch(secureProxyUrl, {
+  method: "POST",
+  headers: {
+    "X-PROVIDER-Forward-To": "https://api.mypsp.com/v1/payment_intents",
+  },
+  body: JSON.stringify({
+    card: { number: card.numberToken, cvc: card.cscToken },
+    amount: value * 100,
+    capture_method: "manual",
+  }),
+})
+```
+
 ## Preferred pattern
 
 Secure Proxy data flow:

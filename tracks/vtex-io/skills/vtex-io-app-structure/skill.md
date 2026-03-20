@@ -241,6 +241,42 @@ If you see an app name with uppercase letters, underscores, special characters, 
 
 Uppercase letters and underscores in the name will be rejected. Version "2.1" is not valid semver — must be "2.1.0".
 
+---
+
+### Constraint: Payment connector apps must pin `axios` in `resolutions`
+
+When building a VTEX IO payment connector (any app that depends on `@vtex/payment-provider`), the `node/package.json` MUST include `"axios": "0.21.1"` in the `resolutions` field, alongside the other required resolutions.
+
+**Why this matters**
+`@vtex/api` depends on `axios` as a transitive dependency. `axios >= 1.0.0` uses TypeScript 4.1 key remapping syntax (`[Key in Method as Lowercase<Key>]` in mapped types). The VTEX builder-hub is pinned to TypeScript **3.9.7** and cannot parse this syntax — `skipLibCheck` does not help because it is a **parse error**, not a type error. The result is a hard compilation failure before any application code is compiled.
+
+**Detection**
+If `node/package.json` has `@vtex/payment-provider` in its dependencies but does NOT have `"axios": "0.21.1"` in `resolutions`, STOP and add it.
+
+**Correct `node/package.json` resolutions for payment connectors**
+```json
+{
+  "resolutions": {
+    "@types/express-serve-static-core": "4.17.20",
+    "@types/koa": "2.11.6",
+    "axios": "0.21.1"
+  }
+}
+```
+
+**Wrong**
+```json
+{
+  "resolutions": {
+    "@types/express-serve-static-core": "4.17.20",
+    "@types/koa": "2.11.6"
+  }
+}
+```
+Missing `axios` — allows `@vtex/api` to pull in `axios >= 1.0`, which uses TypeScript 4.x syntax that crashes the builder-hub compiler.
+
+After adding resolutions, always run `yarn install` inside the `node/` folder before `vtex link`.
+
 ## Preferred pattern
 
 Initialize with the VTEX IO CLI:

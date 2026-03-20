@@ -953,6 +953,83 @@ async function createPaymentHandler(req: Request, res: Response): Promise<void> 
 }
 ```
 
+---
+
+### Constraint: Modern PSP APIs require a two-step Secure Proxy flow
+
+Many modern PSPs (card networks, wallet providers) use a two-step authorization model:
+1. **Step 1 — via Secure Proxy** (card data involved): create a payment instrument/method token at the PSP from the card tokens. The Secure Proxy replaces VTEX tokens with real card data before forwarding.
+2. **Step 2 — direct to PSP** (no card data): use the instrument token from Step 1 to create and confirm the payment intent. This call does NOT go through the Secure Proxy because no card data is involved.
+
+**Why this matters**
+Attempting to send card tokens and payment metadata in a single request through the Secure Proxy will fail because the PSP API expects them in separate calls. The instrument token from Step 1 is safe to use in direct API calls — it references tokenized card data at the PSP, not raw card numbers.
+
+**Detection**
+If the connector tries to do card tokenization AND payment authorization in a single Secure Proxy call, review the PSP documentation. If the PSP has separate endpoints for "create payment method" and "create payment intent", use the two-step pattern.
+
+**Correct — two-step flow**
+```typescript
+// Step 1: via Secure Proxy — card data involved
+// The proxy replaces VTEX tokens (numberToken, cscToken) with real card data
+const instrumentResponse = await fetch(secureProxyUrl, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "X-PROVIDER-Forward-To": "https://api.mypsp.com/v1/payment_methods",
+    "X-PROVIDER-Forward-Authorization": `Bearer ${apiKey}`,
+  },
+  body: [
+    `type=card`,
+    `card[number]=${card.numberToken}`,
+    `card[cvc]=${card.cscToken}`,
+    `card[exp_month]=${card.expiration.month}`,
+    `card[exp_year]=${card.expiration.year}`,
+  ].join("&"),
+})
+const { id: paymentMethodId } = await instrumentResponse.json()
+
+// Step 2: direct to PSP — no card data, safe to call directly
+const paymentResponse = await fetch("https://api.mypsp.com/v1/payment_intents", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Authorization": `Bearer ${apiKey}`,
+    "Idempotency-Key": `authorize-${paymentId}`,
+  },
+  body: [
+    `amount=${Math.round(value * 100)}`,
+    `currency=${currency.toLowerCase()}`,
+    `payment_method=${paymentMethodId}`,
+    `capture_method=manual`,
+    `confirm=true`,
+  ].join("&"),
+})
+const paymentIntent = await paymentResponse.json()
+
+// Save paymentMethodId + paymentIntent.id in VBase for cancel/capture/refund
+await this.context.clients.vbase.saveJSON("payments", paymentId, {
+  paymentMethodId,
+  intentId: paymentIntent.id,
+})
+```
+
+**Wrong — single-step attempt**
+```typescript
+// WRONG: trying to include both card data AND payment metadata in one Secure Proxy call
+// The PSP API separates these operations — this will fail with a 400 or 422
+const response = await fetch(secureProxyUrl, {
+  method: "POST",
+  headers: {
+    "X-PROVIDER-Forward-To": "https://api.mypsp.com/v1/payment_intents",
+  },
+  body: JSON.stringify({
+    card: { number: card.numberToken, cvc: card.cscToken },
+    amount: value * 100,
+    capture_method: "manual",
+  }),
+})
+```
+
 ## Preferred pattern
 
 Secure Proxy data flow:
@@ -1149,7 +1226,15 @@ Do **not** use this skill for:
 
 ### Constraint: Use the real SDK method names — not the PPP documentation names
 
-The `PaymentProvider` abstract class exposes methods named `authorize`, `cancel`, `settle`, `refund`, and optionally `inbound`. These are **not** named `createPayment`, `cancelPayment`, `settlePayment`, or `refundPayment` as in the PPP public documentation.
+The `PaymentProvider` abstract class exposes methods named `authorize`, `cancel`, `settle`, `refund`, and `inbound`. These are **not** named `createPayment`, `cancelPayment`, `settlePayment`, or `refundPayment` as in the PPP public documentation.
+
+> **`inbound` must always be declared in the connector class**, even when not used. TypeScript 3.9.7 requires all abstract members to be present in concrete subclasses. If you do not need to handle inbound requests, declare it as `undefined`:
+> ```typescript
+> public inbound:
+>   | ((request: InboundRequest) => Promise<InboundResponse>)
+>   | undefined = undefined
+> ```
+> Omitting `inbound` entirely causes: `error TS2515: Non-abstract class 'MyConnector' does not implement inherited abstract member 'inbound' from class 'PaymentProvider'.`
 
 **Why this matters**
 The public PPP documentation describes the HTTP protocol, not the TypeScript SDK. Using PPP names causes `Method 'createPayment' not implemented` errors that prevent `vtex link` from succeeding.
@@ -1165,7 +1250,7 @@ If the connector class implements methods named `createPayment`, `cancelPayment`
 | Cancel Payment         | `cancel`                 | `CancellationRequest`     | `CancellationResponse`     |
 | Capture/Settle Payment | `settle`                 | `SettlementRequest`       | `SettlementResponse`       |
 | Refund Payment         | `refund`                 | `RefundRequest`           | `RefundResponse`           |
-| Inbound Request        | `inbound` (optional)     | `InboundRequest`          | `InboundResponse`          |
+| Inbound Request        | `inbound` (**must declare**) | `InboundRequest`          | `InboundResponse`          |
 
 **Correct**
 ```typescript
@@ -1257,6 +1342,7 @@ import {
 import {
   CreditCardAuthorized,   // approved card: status='approved', delayToAutoSettle, delayToAutoSettleAfterAntifraud
   FailedAuthorization,    // denied: status='denied', tid, acquirer, authorizationId, delayToCancel, code, message
+  PendingAuthorization,   // async/undefined: status='undefined', paymentUrl, authorizationId, paymentAppData
 } from "@vtex/payment-provider"
 
 // ── Card types ────────────────────────────────────────────────────────────────
@@ -1295,7 +1381,8 @@ If the `cancel()` method returns an object with a `requestId` field, STOP and re
 **Correct**
 ```typescript
 async cancel(request: CancellationRequest): Promise<CancellationResponse> {
-  const result = await this.stripe.paymentIntents.cancel(request.authorizationId)
+  const apiKey = getPSPKey(request.merchantSettings)
+  const result = await this.context.clients.acquirer.cancel(request.authorizationId, apiKey)
 
   return {
     paymentId: request.paymentId,
@@ -1332,7 +1419,8 @@ Both `SettlementResponse` and `RefundResponse` have `value: number` as a require
 **Correct**
 ```typescript
 async settle(request: SettlementRequest): Promise<SettlementResponse> {
-  const result = await this.stripe.paymentIntents.capture(request.authorizationId)
+  const apiKey = getPSPKey(request.merchantSettings)
+  const result = await this.context.clients.acquirer.capture(request.authorizationId, apiKey)
 
   return {
     paymentId: request.paymentId,
@@ -1345,7 +1433,8 @@ async settle(request: SettlementRequest): Promise<SettlementResponse> {
 }
 
 async refund(request: RefundRequest): Promise<RefundResponse> {
-  const result = await this.stripe.refunds.create({ payment_intent: request.authorizationId })
+  const apiKey = getPSPKey(request.merchantSettings)
+  const result = await this.context.clients.acquirer.refund(request.authorizationId, apiKey)
 
   return {
     paymentId: request.paymentId,
@@ -1378,8 +1467,8 @@ const approved: CreditCardAuthorized = {
   authorizationId: "pi_xxx",
   tid: "pi_xxx",
   nsu: "pi_xxx",
-  acquirer: "Stripe",
-  code: "requires_capture",
+  acquirer: "MyPSP",
+  code: "authorized",
   message: "Payment authorized",
   delayToAutoSettle: 21600,
   delayToAutoSettleAfterAntifraud: 1800,
@@ -1400,15 +1489,28 @@ const approved: CreditCardAuthorized = {
 
 ---
 
-### Constraint: Access card data through request.card with type guards
+### Constraint: Access card data through request.card with type guards — `card` and `secureProxyUrl` do not exist on the base union
 
-Card data (tokens or raw) lives in `request.card` (typed as `Card | TokenizedCard`), not at the top level of the request. Accessing `request.numberToken` directly causes `Property 'numberToken' does not exist on type 'CardAuthorization'`.
+`AuthorizationRequest` is a **discriminated union** of several types:
+
+```typescript
+type AuthorizationRequest =
+  | CreditCardAuthorization   // extends CardAuthorization — has .card + .secureProxyUrl
+  | DebitCardAuthorization    // extends CardAuthorization — has .card + .secureProxyUrl
+  | BankInvoiceAuthorization  // NO .card, NO .secureProxyUrl
+  | DirectSaleAuthorization   // NO .card, NO .secureProxyUrl
+  | Authorization             // NO .card, NO .secureProxyUrl
+```
+
+The fields `request.card` and `request.secureProxyUrl` **do not exist** on the base `AuthorizationRequest` union — they are only present after narrowing to `CardAuthorization` via `isCardAuthorization()`. Accessing them without narrowing causes compile errors.
+
+Additionally, `bin` only exists on `TokenizedCard`, not on `Card`. Use `isTokenizedCard()` before accessing `card.bin`.
 
 **Why this matters**
-`AuthorizationRequest` is a union type. For card payments it resolves to `CardAuthorization`, which has a `.card` field typed as `Card | TokenizedCard`. Token properties (`numberToken`, `holderToken`, `cscToken`) exist only on `TokenizedCard`. Without type narrowing, the compiler rejects any property access.
+Without `isCardAuthorization()`, TypeScript reports `error TS2339: Property 'card' does not exist on type 'AuthorizationRequest'` and `Property 'secureProxyUrl' does not exist on type 'AuthorizationRequest'`. Without `isTokenizedCard()`, TypeScript reports `Property 'bin' does not exist on type 'Card | TokenizedCard'`.
 
 **Detection**
-If the code accesses `request.numberToken`, `request.cscToken`, or `request.card.numberToken` without first calling `isCardAuthorization()` and `isTokenizedCard()`, STOP and add proper type narrowing.
+If the code accesses `request.card`, `request.secureProxyUrl`, `request.numberToken`, `card.bin`, or `card.numberToken` without the corresponding type guard, STOP and add narrowing.
 
 **Correct pattern for card data access**
 ```typescript
@@ -1457,7 +1559,7 @@ async authorize(request: AuthorizationRequest): Promise<AuthorizationResponse> {
     numberToken,          // ← from card, not from request
     holderToken,
     cscToken,
-    bin,
+    bin,                  // ← only exists on TokenizedCard, NOT on Card
     numberLength,
     expiration,           // { month: string, year: string }
   } = card
@@ -1485,8 +1587,96 @@ async authorize(request: AuthorizationRequest): Promise<AuthorizationResponse> {
   // WRONG: numberToken does not exist directly on AuthorizationRequest
   const { numberToken, cscToken } = request  // ← COMPILE ERROR
 
-  // ALSO WRONG: accessing card.numberToken without narrowing
+  // ALSO WRONG: accessing card without narrowing the request
+  const { card } = request              // ← COMPILE ERROR: 'card' does not exist on 'AuthorizationRequest'
+  const { secureProxyUrl } = request    // ← COMPILE ERROR: 'secureProxyUrl' does not exist
   const { numberToken } = request.card  // ← COMPILE ERROR: Card | TokenizedCard has no numberToken
+}
+```
+
+---
+
+### Constraint: AuthorizationResponse is a discriminated union — declare the return type explicitly
+
+`AuthorizationResponse` is a union of incompatible types (`CreditCardAuthorized | FailedAuthorization | PendingAuthorization | ...`). Returning an object literal without an explicit type annotation causes TypeScript to fail assignability checks against all union members simultaneously.
+
+**Why this matters**
+When you return `return { paymentId, status: "approved", ... }` without a type, TypeScript tries to match the literal against every member of the union. Because `CreditCardAuthorized`, `FailedAuthorization`, and `PendingAuthorization` have mutually exclusive required fields, the error is:
+`Type '{...}' is not assignable to type 'AuthorizationResponse'. Type '{...}' is missing the following properties from type 'BankInvoiceResponse': paymentUrl, identificationNumber, ...`
+
+**Detection**
+If any `return` statement in `authorize()` returns an object literal without an explicit concrete type annotation, STOP and add the type.
+
+**Correct — approved (credit/debit card)**
+```typescript
+import type { CreditCardAuthorized } from "@vtex/payment-provider"
+
+const approved: CreditCardAuthorized = {
+  paymentId: request.paymentId,
+  status: "approved",
+  tid: acquirerTransactionId,            // string — required
+  authorizationId: acquirerTransactionId, // string — required
+  nsu: acquirerTransactionId,
+  acquirer: "MyPSP",
+  code: "authorized",
+  message: "Payment authorized",
+  delayToAutoSettle: 21600,              // 6h in seconds
+  delayToAutoSettleAfterAntifraud: 1800, // 30min in seconds
+  delayToCancel: 300,
+  isNewTokenization: undefined,          // Maybe<boolean> — undefined, not null
+  generatedCardToken: undefined,         // Maybe<CreditCardToken> — undefined, not null
+}
+return approved
+```
+
+**Correct — denied**
+```typescript
+import type { FailedAuthorization } from "@vtex/payment-provider"
+
+const denied: FailedAuthorization = {
+  paymentId: request.paymentId,
+  status: "denied",
+  tid: null,
+  acquirer: "MyPSP",
+  authorizationId: null,
+  delayToCancel: 300,
+  delayToAutoSettle: null,
+  delayToAutoSettleAfterAntifraud: null,
+  code: "DECLINED",
+  message: "Card declined by acquirer",
+}
+return denied
+```
+
+**Correct — pending (async methods: Pix, Boleto)**
+```typescript
+import type { PendingAuthorization } from "@vtex/payment-provider"
+
+const pending: PendingAuthorization = {
+  paymentId: request.paymentId,
+  status: "undefined",
+  tid: null,
+  acquirer: "MyPSP",
+  authorizationId: null,
+  delayToCancel: 604800,   // 7 days
+  delayToAutoSettle: null,
+  delayToAutoSettleAfterAntifraud: null,
+  code: "PENDING",
+  message: "Awaiting payment",
+  paymentUrl: null,        // required in PendingAuthorization
+  paymentAppData: null,    // required in PendingAuthorization
+}
+return pending
+```
+
+**Wrong**
+```typescript
+// WRONG: untyped object literal — TS cannot determine which union member to check
+return {
+  paymentId: request.paymentId,
+  status: "approved",
+  tid: result.id,
+  // Missing fields required by other union members → TS2322 assignability error
 }
 ```
 
@@ -1554,7 +1744,8 @@ Yarn `resolutions` override the installed version of a dependency at any nesting
   },
   "resolutions": {
     "@types/express-serve-static-core": "4.17.20",
-    "@types/koa": "2.11.6"
+    "@types/koa": "2.11.6",
+    "axios": "0.21.1"
   }
 }
 ```
@@ -1565,6 +1756,7 @@ Yarn `resolutions` override the installed version of a dependency at any nesting
 |---------|----------------------|--------|
 | `@types/express-serve-static-core` | `4.17.20` | `4.17.21` introduced template literal types (TS 4.1 feature) |
 | `@types/koa` | `2.11.6` | Later versions use `import type X = require()` (TS 4.x syntax) |
+| `axios` | `0.21.1` | `axios >= 1.0` uses key remapping (`[Key as Lowercase<Key>]`) — TS 4.1 feature |
 
 **Wrong**
 ```json
@@ -1602,6 +1794,85 @@ If `manifest.json` contains `"vendor": "myvendor"` or any placeholder, STOP. Run
     "node": "6.x",
     "docs": "0.x"
   }
+}
+```
+
+---
+
+### Constraint: Access clients via `this.context.clients`, never `this.clients`
+
+Inside a `PaymentProvider` subclass, all injected clients (VBase, custom acquirer clients, etc.) are accessed through `this.context.clients`. The property `this.clients` does not exist on `PaymentProvider`.
+
+**Why this matters**
+`PaymentProvider` extends from `@vtex/api`'s base service class and exposes `protected context: ServiceContext<ClientsT>`. There is no shortcut `this.clients` alias. Using it causes `error TS2339: Property 'clients' does not exist on type 'MyConnector'`.
+
+**Detection**
+If the connector code uses `this.clients.` anywhere, STOP and replace with `this.context.clients.`.
+
+**Correct**
+```typescript
+async authorize(request: AuthorizationRequest): Promise<AuthorizationResponse> {
+  // VBase for idempotency storage
+  const existing = await this.context.clients.vbase.getJSON<PaymentRecord>(
+    "payments",
+    request.paymentId,
+    true  // nullIfNotFound — avoids 404 exception
+  )
+
+  // Custom acquirer client
+  const result = await this.context.clients.acquirer.authorize(payload, apiKey)
+}
+```
+
+**Wrong**
+```typescript
+async authorize(request: AuthorizationRequest): Promise<AuthorizationResponse> {
+  // COMPILE ERROR: Property 'clients' does not exist on type 'MyConnector'
+  const existing = await this.clients.vbase.getJSON("payments", request.paymentId)
+}
+```
+
+---
+
+### Constraint: Use `request.merchantSettings` for PSP API credentials
+
+Every payment request (`AuthorizationRequest`, `CancellationRequest`, `SettlementRequest`, `RefundRequest`) includes a `merchantSettings: Maybe<CustomField[]>` field. This is the VTEX-standard way to receive per-merchant PSP credentials configured in VTEX Admin → Payments → Affiliations.
+
+Do **not** use `ctx.clients.apps.getAppSettings()` for credentials — that returns app-level settings, not per-affiliation merchant credentials.
+
+**Why this matters**
+Payment affiliations are per-merchant. Using `apps.getAppSettings()` would return a single global key shared by all merchants, which is not how multi-merchant VTEX stores work. `merchantSettings` is the correct channel, automatically populated by the Gateway for each request.
+
+**Detection**
+If the connector calls `apps.getAppSettings()` to retrieve a PSP API key, STOP and replace with `request.merchantSettings`.
+
+**Correct**
+```typescript
+import type { CustomField, Maybe } from "@vtex/payment-provider"
+
+function getPSPKey(settings: Maybe<CustomField[]>): string {
+  const key = settings?.find(s => s.name === "apiKey")?.value
+  if (!key) throw new Error("apiKey not configured in merchant affiliation settings")
+  return key
+}
+
+async authorize(request: AuthorizationRequest): Promise<AuthorizationResponse> {
+  const apiKey = getPSPKey(request.merchantSettings)
+  // use apiKey to call the acquirer
+}
+
+async cancel(request: CancellationRequest): Promise<CancellationResponse> {
+  const apiKey = getPSPKey(request.merchantSettings)
+  // use apiKey to call the acquirer
+}
+```
+
+**Wrong**
+```typescript
+// WRONG: returns app-level settings, not per-affiliation merchant credentials
+async authorize(request: AuthorizationRequest): Promise<AuthorizationResponse> {
+  const settings = await this.context.clients.apps.getAppSettings()
+  const apiKey = settings.apiKey  // this is a global key, not per-merchant
 }
 ```
 
@@ -1784,7 +2055,7 @@ export default new PaymentProviderService({
 
 ```
 [ ] vtex whoami → value matches vendor in manifest.json exactly
-[ ] node/package.json has resolutions: { "@types/express-serve-static-core": "4.17.20", "@types/koa": "2.11.6" }
+[ ] node/package.json has resolutions: { "@types/express-serve-static-core": "4.17.20", "@types/koa": "2.11.6", "axios": "0.21.1" }
 [ ] typescript version in devDependencies is a pinned value like "3.9.7" (not a range like "4.x")
 [ ] yarn install ran in node/ after adding resolutions
 [ ] Connector implements: authorize, cancel, settle, refund (not createPayment/cancelPayment/...)
@@ -1797,6 +2068,10 @@ export default new PaymentProviderService({
 [ ] RefundResponse includes value: number
 [ ] InboundResponse uses responseData: { statusCode, contentType, content } (not body)
 [ ] PaymentProviderService receives clients: { implementation: Clients, options: {} }
+[ ] inbound is declared in the connector (as method or as undefined = undefined)
+[ ] All clients accessed via this.context.clients (not this.clients)
+[ ] Each return in authorize() has an explicit concrete type (CreditCardAuthorized, FailedAuthorization, or PendingAuthorization)
+[ ] PSP credentials fetched from request.merchantSettings, not from apps.getAppSettings()
 ```
 
 ## Common failure modes
@@ -1811,6 +2086,11 @@ export default new PaymentProviderService({
 - **Missing resolutions** — Not adding `resolutions` to `node/package.json`. Results in template literal type parse errors from `@types/express-serve-static-core >= 4.17.21`.
 - **Wrong vendor** — Keeping a placeholder vendor in `manifest.json`. Builder-hub rejects it immediately.
 - **clients passed as class** — Passing `clients: Clients` instead of `clients: { implementation: Clients, options: {} }` to `PaymentProviderService`. Results in a TypeScript shape mismatch error.
+- **`this.clients` instead of `this.context.clients`** — Accessing `this.clients` inside the connector. Results in `Property 'clients' does not exist on type 'MyConnector'`.
+- **`inbound` not declared** — Omitting `inbound` from the connector class entirely. Results in `error TS2515: Non-abstract class does not implement inherited abstract member 'inbound'`.
+- **Untyped `authorize()` return** — Returning object literals from `authorize()` without explicit type annotations (`CreditCardAuthorized`, `FailedAuthorization`, `PendingAuthorization`). Results in `TS2322: Type is not assignable to type 'AuthorizationResponse'`.
+- **Wrong credentials source** — Using `apps.getAppSettings()` for PSP API key instead of `request.merchantSettings`. Retrieves app-level config instead of per-merchant affiliation credentials.
+- **Missing axios resolution** — Not pinning `"axios": "0.21.1"` in resolutions. `axios >= 1.0` uses TS 4.1 key remapping syntax that causes parse errors in builder-hub.
 
 ## Build sequence
 
@@ -1824,8 +2104,9 @@ cd node && yarn install && cd ..
 # 3. Link the app
 vtex link
 
-# 4. Configure PSP credentials (after successful link)
-vtex settings set {vendor}.{app-name} stripeSecretKey sk_test_...
+# 4. Configure PSP credentials via merchant settings in VTEX Admin
+# Go to: https://{account}.myvtex.com/admin/payments/affiliations
+# (each merchant configures their own credentials per affiliation)
 
 # 5. Verify manifest endpoint
 curl https://dev--{account}.myvtex.com/_v/{vendor}.{app-name}/v0/manifest
