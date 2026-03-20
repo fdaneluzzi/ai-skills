@@ -1682,6 +1682,115 @@ return {
 
 ---
 
+### Constraint: Custom PSP clients must be declared in the `Clients` class before use
+
+`this.context.clients.myClient` only works if `myClient` is registered as a property of the `Clients` class in `node/clients/index.ts`. Accessing a client that was never declared there causes `error TS2339: Property 'myClient' does not exist on type 'IOClients'`.
+
+**Why this matters**
+`this.context.clients` is typed as your `Clients` class. Any client you want to call must be a declared property of that class. The compiler enforces this strictly.
+
+**Detection**
+If `this.context.clients.X` is used but there is no property `X` declared in the `Clients` class, STOP and add it.
+
+**Correct — `node/clients/index.ts`**
+```typescript
+import { IOClients } from "@vtex/api"
+import { VBase } from "@vtex/api"
+import AcquirerClient from "./acquirerClient"
+
+export class Clients extends IOClients {
+  public get acquirer() {
+    return this.getOrSet("acquirer", AcquirerClient)
+  }
+}
+```
+
+Then in `connector.ts`:
+```typescript
+const result = await this.context.clients.acquirer.authorize(payload, apiKey)
+//                                         ^^^^^^^^ declared in Clients class ✓
+```
+
+**Wrong**
+```typescript
+// Using a client that was never declared in the Clients class
+const result = await this.context.clients.myUndeclaredClient.doSomething()
+// TS2339: Property 'myUndeclaredClient' does not exist on type 'IOClients'
+```
+
+---
+
+### Constraint: Guard `secureProxyUrl` before passing to `fetch` — it is `Maybe<string>`
+
+`secureProxyUrl` in `CardAuthorization` is typed as `Maybe<string>` (`string | undefined`). The `fetch` function requires a `RequestInfo` (non-undefined string). Passing `secureProxyUrl` directly without a null check causes `error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'RequestInfo'`.
+
+**Why this matters**
+`secureProxyUrl` is absent when the Gateway operates in PCI-certified mode (no Secure Proxy). Any code that calls `fetch(secureProxyUrl, ...)` must first verify it is defined.
+
+**Detection**
+If `secureProxyUrl` is used directly as the first argument to `fetch` (or any function expecting a `string`) without a truthiness check, STOP and add a guard.
+
+**Correct**
+```typescript
+const { secureProxyUrl } = request  // Maybe<string>
+
+if (!secureProxyUrl) {
+  // VTEX IO apps must always use Secure Proxy — deny if missing
+  return {
+    paymentId: request.paymentId,
+    status: "denied",
+    // ...
+  } as FailedAuthorization
+}
+
+// Now secureProxyUrl is narrowed to string ✓
+const response = await fetch(secureProxyUrl, { method: "POST", ... })
+```
+
+**Wrong**
+```typescript
+const { secureProxyUrl } = request  // string | undefined
+const response = await fetch(secureProxyUrl, { ... })
+// TS2345: Argument of type 'string | undefined' is not assignable to 'RequestInfo'
+```
+
+---
+
+### Constraint: Do not annotate `catch` clause variables — TypeScript 3.9.7 does not support it
+
+The syntax `catch (err: unknown)` was introduced in TypeScript **4.0**. The VTEX builder-hub uses TypeScript **3.9.7**, which does not allow type annotations in catch clauses. Using it causes `error TS1196: Catch clause variable cannot have a type annotation`.
+
+**Why this matters**
+TS 3.9.7 requires the catch variable to be untyped. TypeScript infers it as `any`. If you need to narrow it, use a type guard inside the catch block.
+
+**Detection**
+If any `catch` clause in the connector has a type annotation (e.g., `catch (err: unknown)` or `catch (err: Error)`), STOP and remove the annotation.
+
+**Correct**
+```typescript
+try {
+  const result = await fetch(secureProxyUrl, options)
+  return result.json()
+} catch (err) {
+  // err is 'any' in TS 3.9.7 — narrow manually if needed
+  const message = err instanceof Error ? err.message : String(err)
+  throw new Error(`Acquirer call failed: ${message}`)
+}
+```
+
+**Wrong**
+```typescript
+try {
+  // ...
+} catch (err: unknown) {   // TS1196: Catch clause variable cannot have a type annotation
+  // ...
+} catch (err: Error) {     // also TS1196
+  // ...
+}
+```
+
+---
+
 ### Constraint: PaymentProviderService must receive clients as { implementation, options }
 
 `PaymentProviderService` requires the `clients` field to be an object with `implementation` and `options` keys. Passing `Clients` directly causes a TypeScript error.
@@ -2072,6 +2181,9 @@ export default new PaymentProviderService({
 [ ] All clients accessed via this.context.clients (not this.clients)
 [ ] Each return in authorize() has an explicit concrete type (CreditCardAuthorized, FailedAuthorization, or PendingAuthorization)
 [ ] PSP credentials fetched from request.merchantSettings, not from apps.getAppSettings()
+[ ] Custom PSP client is declared as a getter in the Clients class (not just called via this.context.clients)
+[ ] secureProxyUrl is checked for undefined before passing to fetch()
+[ ] No catch (err: unknown) or catch (err: Error) — TS 3.9.7 does not allow type annotations in catch clauses
 ```
 
 ## Common failure modes
@@ -2091,6 +2203,9 @@ export default new PaymentProviderService({
 - **Untyped `authorize()` return** — Returning object literals from `authorize()` without explicit type annotations (`CreditCardAuthorized`, `FailedAuthorization`, `PendingAuthorization`). Results in `TS2322: Type is not assignable to type 'AuthorizationResponse'`.
 - **Wrong credentials source** — Using `apps.getAppSettings()` for PSP API key instead of `request.merchantSettings`. Retrieves app-level config instead of per-merchant affiliation credentials.
 - **Missing axios resolution** — Not pinning `"axios": "0.21.1"` in resolutions. `axios >= 1.0` uses TS 4.1 key remapping syntax that causes parse errors in builder-hub.
+- **Custom client not registered in `Clients` class** — Calling `this.context.clients.myClient` when `myClient` is not declared as a getter in `Clients extends IOClients`. Results in `TS2339: Property 'myClient' does not exist on type 'IOClients'`.
+- **`secureProxyUrl` passed to `fetch` without guard** — `secureProxyUrl` is `Maybe<string>` (`string | undefined`). Passing it directly to `fetch` causes `TS2345: Argument of type 'string | undefined' is not assignable to type 'RequestInfo'`. Always check `if (!secureProxyUrl)` first.
+- **`catch (err: unknown)` or `catch (err: Error)`** — Type annotations in catch clauses are a TS 4.0 feature. TS 3.9.7 rejects them with `TS1196: Catch clause variable cannot have a type annotation`. Remove the annotation and narrow with `instanceof Error` inside the block.
 
 ## Build sequence
 
